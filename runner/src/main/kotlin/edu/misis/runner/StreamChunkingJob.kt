@@ -4,10 +4,13 @@ import org.quartz.DisallowConcurrentExecution
 import org.quartz.InterruptableJob
 import org.quartz.JobExecutionContext
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.scheduling.quartz.QuartzJobBean
 import java.io.BufferedInputStream
-import java.io.File
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 const val WIDTH = 1280
 const val HEIGHT = 720
@@ -28,7 +31,7 @@ class ChunkReader(
         val buffer = ByteArray(bufferSize)
         while (hasReadWholeChunk) {
             val bytesRead = bufferedStream.readNBytes(buffer, 0, bufferSize)
-            logger.info("Bytes read: $bytesRead")
+            logger.info("Raw chunk bytes read: $bytesRead")
             if (bytesRead != bufferSize) {
                 hasReadWholeChunk = false
             } else {
@@ -85,19 +88,36 @@ class ChunkMP4Encoder {
 }
 
 @DisallowConcurrentExecution
-class StreamChunkingJob : InterruptableJob {
+class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
     companion object {
-        const val STREAM_URL = "streamUrl"
+        const val JOB_GROUP = "streamChunking"
+        const val STREAM_URL_KEY = "streamUrl"
     }
+
+    @Autowired
+    private lateinit var streamRepository: StreamRepository
 
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
+    private val scheduledExecutor = Executors.newScheduledThreadPool(1)
 
-    override fun execute(context: JobExecutionContext) {
-        val streamUrl: String = context.jobDetail.jobDataMap.getString(STREAM_URL) ?:
+    private var videoCaptureSubprocess: Process? = null
+
+    override fun executeInternal(context: JobExecutionContext) {
+        val streamUrl: String = context.mergedJobDataMap.getString(STREAM_URL_KEY) ?:
             throw IllegalStateException("Stream url is missing")
 
-        val process = ProcessBuilder(
+        // Do not start stream for non-existent job
+        // Do not start stream on job recovery
+        val currentStream = streamRepository.findById(streamUrl)
+        if (currentStream == null || currentStream.state != StreamState.IN_PROGRESS) {
+            logger.warn("Stream $streamUrl was rejected due to incorrect state")
+            // Since stream was not started, explicitly set state to terminated
+            streamRepository.updateState(streamUrl, StreamState.TERMINATED)
+            return
+        }
+
+        videoCaptureSubprocess = ProcessBuilder(
             "ffmpeg",
             "-rtsp_transport", "tcp",
             "-i", streamUrl,
@@ -109,25 +129,53 @@ class StreamChunkingJob : InterruptableJob {
         ).redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
             .start()
 
-        logger.info("Started subprocess: ${process.pid()}")
+        logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
-        ChunkReader(process.inputStream).use { reader ->
+        val encodingExecutor = Executors.newSingleThreadExecutor()
+
+        ChunkReader(videoCaptureSubprocess!!.inputStream).use { reader ->
             reader.readChunks()
                 .forEachIndexed { idx, chunk ->
-                    CompletableFuture.runAsync {
+                    encodingExecutor.execute {
                         val encodedChunk = encoder.encode(chunk)
                         // todo: write encoded chunk to s3/redis
                         logger.info("Encoded chunk size: ${encodedChunk.size}")
-                        File("encoded-$idx.mp4").writeBytes(encodedChunk)
+                        //File("encoded-$idx.mp4").writeBytes(encodedChunk)
                     }
                 }
         }
 
-        process.waitFor()
+        val scheduledFuture = scheduledExecutor.scheduleAtFixedRate({
+            val stream = streamRepository.findById(streamUrl)
+            if (stream?.state == StreamState.AWAIT_TERMINATION) {
+                throw IllegalStateException("Stream should be terminated")
+            }
+        },
+            0,
+            2,
+            TimeUnit.SECONDS
+        )
+
+        runCatching {
+            scheduledFuture.get()
+        }.onFailure {
+            if (it.cause is IllegalStateException) {
+                logger.info("Closing stream due to state change")
+                videoCaptureSubprocess!!.destroy()
+            } else {
+                logger.error("Unexpected exception during status check:", it.cause)
+            }
+        }
+
     }
 
     override fun interrupt() {
-        logger.info("Interruption callback was called")
-        TODO("Not yet implemented")
+        logger.info("Interrupting rtsp client subprocess...")
+        if (videoCaptureSubprocess != null) {
+            videoCaptureSubprocess!!.destroy()
+            logger.info("Video capture subprocess was destroyed")
+        } else {
+            logger.info("Video capture subprocess was not initialized")
+        }
     }
 }
