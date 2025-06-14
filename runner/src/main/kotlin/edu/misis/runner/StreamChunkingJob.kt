@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.scheduling.quartz.QuartzJobBean
 import java.io.BufferedInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -30,7 +31,13 @@ class ChunkReader(
         var hasReadWholeChunk = true
         val buffer = ByteArray(bufferSize)
         while (hasReadWholeChunk) {
-            val bytesRead = bufferedStream.readNBytes(buffer, 0, bufferSize)
+            val bytesRead = try {
+                bufferedStream.readNBytes(buffer, 0, bufferSize)
+            } catch (e: IOException) {
+                logger.warn("Exception awaiting new chunk")
+                0
+            }
+
             logger.info("Raw chunk bytes read: $bytesRead")
             if (bytesRead != bufferSize) {
                 hasReadWholeChunk = false
@@ -66,7 +73,7 @@ class ChunkMP4Encoder {
             "-f", "mp4",
             "pipe:1"
         ).redirectInput(ProcessBuilder.Redirect.PIPE)
-            .redirectError(ProcessBuilder.Redirect.INHERIT) // todo: consider inherit
+            .redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
             .start()
 
         logger.info("Encoder subprocess: ${process.pid()}")
@@ -128,11 +135,22 @@ class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
             "-"
         ).redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
             .start()
-
         logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
-        val encodingExecutor = Executors.newSingleThreadExecutor()
+        val scheduleFuture = scheduledExecutor.scheduleAtFixedRate({
+            val stream = streamRepository.findById(streamUrl)
+            if (stream?.state == StreamState.AWAIT_TERMINATION) {
+                videoCaptureSubprocess!!.destroy()
+                logger.info("Stream was stopped, updating state")
+                streamRepository.updateState(streamUrl, StreamState.TERMINATED)
+            }
+        },
+            0,
+            2,
+            TimeUnit.SECONDS
+        )
 
+        val encodingExecutor = Executors.newSingleThreadExecutor()
         ChunkReader(videoCaptureSubprocess!!.inputStream).use { reader ->
             reader.readChunks()
                 .forEachIndexed { idx, chunk ->
@@ -145,28 +163,8 @@ class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
                 }
         }
 
-        val scheduledFuture = scheduledExecutor.scheduleAtFixedRate({
-            val stream = streamRepository.findById(streamUrl)
-            if (stream?.state == StreamState.AWAIT_TERMINATION) {
-                throw IllegalStateException("Stream should be terminated")
-            }
-        },
-            0,
-            2,
-            TimeUnit.SECONDS
-        )
-
-        runCatching {
-            scheduledFuture.get()
-        }.onFailure {
-            if (it.cause is IllegalStateException) {
-                logger.info("Closing stream due to state change")
-                videoCaptureSubprocess!!.destroy()
-            } else {
-                logger.error("Unexpected exception during status check:", it.cause)
-            }
-        }
-
+        // Cancel job to not schedule anymore
+        scheduleFuture.cancel(true)
     }
 
     override fun interrupt() {

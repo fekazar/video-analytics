@@ -4,7 +4,7 @@ import jakarta.annotation.PostConstruct
 import org.quartz.JobBuilder
 import org.quartz.Scheduler
 import org.quartz.TriggerBuilder
-import org.quartz.impl.StdSchedulerFactory
+import org.slf4j.LoggerFactory
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -17,18 +17,24 @@ class DebugController(
     val streamRepository: StreamRepository,
     val transactionTemplate: TransactionTemplate,
 ) {
+    private val logger = LoggerFactory.getLogger(DebugController::class.java)
+
     @PostConstruct
     fun postConstruct() {
+        logger.info("Starting scheduler...")
         scheduler.start()
     }
 
     @PostMapping("/start-job")
     fun startJob(@RequestParam("streamUrl") streamUrl: String) {
-        streamRepository.deleteIfTerminated(streamUrl)
+        transactionTemplate.executeWithoutResult {
+            streamRepository.deleteIfTerminated(streamUrl)
+        }
 
         val sampleJob = JobBuilder.newJob(StreamChunkingJob::class.java)
             .withIdentity(streamUrl, StreamChunkingJob.JOB_GROUP)
             .usingJobData(StreamChunkingJob.STREAM_URL_KEY, streamUrl)
+            .requestRecovery()
             .build()
 
         val trigger = TriggerBuilder.newTrigger()
