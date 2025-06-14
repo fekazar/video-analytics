@@ -7,9 +7,10 @@ import org.slf4j.LoggerFactory
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.CompletableFuture
 
-const val WIDTH = 640
-const val HEIGHT = 480
+const val WIDTH = 1280
+const val HEIGHT = 720
 const val FPS = 10
 const val CHUNK_DURATION_SECONDS = 10
 
@@ -31,6 +32,7 @@ class ChunkReader(
             if (bytesRead != bufferSize) {
                 hasReadWholeChunk = false
             } else {
+                // todo: try allocating new array instead of copy
                 yield(buffer.copyOf())
             }
         }
@@ -64,8 +66,13 @@ class ChunkMP4Encoder {
             .redirectError(ProcessBuilder.Redirect.INHERIT) // todo: consider inherit
             .start()
 
-        process.outputStream.write(chunk)
-        process.outputStream.close()
+        logger.info("Encoder subprocess: ${process.pid()}")
+
+        CompletableFuture.runAsync {
+            process.outputStream.write(chunk)
+            process.outputStream.flush()
+            process.outputStream.close()
+        }
 
         val result = process.inputStream.readAllBytes()
 
@@ -92,13 +99,14 @@ class StreamChunkingJob : InterruptableJob {
 
         val process = ProcessBuilder(
             "ffmpeg",
+            "-rtsp_transport", "tcp",
             "-i", streamUrl,
             "-vf", "scale=$WIDTH:$HEIGHT,fps=$FPS",
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
             "-c:v", "rawvideo",
             "-"
-        ).redirectError(ProcessBuilder.Redirect.INHERIT) // todo: consider inherit
+        ).redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
             .start()
 
         logger.info("Started subprocess: ${process.pid()}")
@@ -106,10 +114,12 @@ class StreamChunkingJob : InterruptableJob {
         ChunkReader(process.inputStream).use { reader ->
             reader.readChunks()
                 .forEachIndexed { idx, chunk ->
-                    val encodedChunk = encoder.encode(chunk)
-                    // todo: write encoded chunk to s3/redis
-                    logger.info("Encoded chunk size: ${encodedChunk.size}")
-                    //File("encoded-$idx.mp4").writeBytes(encodedChunk)
+                    CompletableFuture.runAsync {
+                        val encodedChunk = encoder.encode(chunk)
+                        // todo: write encoded chunk to s3/redis
+                        logger.info("Encoded chunk size: ${encodedChunk.size}")
+                        File("encoded-$idx.mp4").writeBytes(encodedChunk)
+                    }
                 }
         }
 

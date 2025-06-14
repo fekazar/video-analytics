@@ -18,6 +18,7 @@ class DebugController {
     @PostMapping("/start-job")
     fun startJob() {
         val sampleJob = JobBuilder.newJob(StreamChunkingJob::class.java)
+            //.usingJobData(StreamChunkingJob.STREAM_URL, "rtsp://10.183.160.71:8080/h264.sdp")
             .usingJobData(StreamChunkingJob.STREAM_URL, "rtsp://localhost:8554/mystream")
             .build()
 
