@@ -8,6 +8,7 @@ import io.minio.PutObjectArgs
 import io.minio.UploadObjectArgs
 import org.quartz.DisallowConcurrentExecution
 import org.quartz.JobExecutionContext
+import org.quartz.JobExecutionException
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.kafka.core.KafkaTemplate
@@ -20,6 +21,7 @@ import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 const val WIDTH = 1280
 const val HEIGHT = 720
@@ -152,11 +154,14 @@ class StreamChunkingJob : QuartzJobBean() {
 
         logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
+        val completedByRequest = AtomicBoolean(false)
+
         val scheduleFuture = scheduledExecutor.scheduleAtFixedRate({
             val stream = streamRepository.findById(streamEntity.id)
             if (stream?.state == StreamState.AWAIT_TERMINATION) {
                 videoCaptureSubprocess.destroy()
                 logger.info("Stream was stopped, updating state")
+                completedByRequest.set(true)
                 kafkaTemplate.send(
                     STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(),
                     StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
@@ -196,5 +201,12 @@ class StreamChunkingJob : QuartzJobBean() {
             scheduleFuture.cancel(true)
             scheduleFuture.get()
         }
+
+        if (!completedByRequest.get()) {
+            logger.warn("StreamChunkingJob has completed unexpectedly")
+            throw JobExecutionException("StreamChunkingJob has completed unexpectedly", true)
+        }
+
+        logger.info("Stream chunking job completes normally")
     }
 }
