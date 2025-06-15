@@ -11,9 +11,9 @@ private class StreamRowMapper : RowMapper<StreamEntity> {
     override fun mapRow(rs: ResultSet, rowNum: Int): StreamEntity {
         return StreamEntity(
             UUID.fromString(rs.getString("id")),
-            DBStreamState.valueOf(rs.getString("state")),
+            StreamState.valueOf(rs.getString("state")),
             rs.getString("streamUrl"),
-            rs.getString("")
+            rs.getString("chunksBucket")
         )
     }
 }
@@ -30,7 +30,7 @@ class StreamRepository(
             where id = ?
         """.trimIndent()
         return jdbcClient.sql(sql)
-            .params(id)
+            .params(id.toString())
             .query(rowMapper)
             .optional()
             .getOrNull()
@@ -38,10 +38,10 @@ class StreamRepository(
 
     fun deleteIfTerminated(streamUrl: String) {
         val sql = """
-            delete from stream where streamUrl and state = ?
+            delete from stream where streamUrl = ? and state = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(streamUrl, DBStreamState.TERMINATED.name)
+            .params(streamUrl, StreamState.TERMINATED.name)
             .update()
     }
 
@@ -53,7 +53,7 @@ class StreamRepository(
             returning *
         """.trimIndent()
         return jdbcClient.sql(sql)
-            .params(streamUrl, UUID.randomUUID(), DBStreamState.INIT_BUCKET.name, streamUrl)
+            .params(UUID.randomUUID(), StreamState.INITIAL.name, streamUrl)
             .query(rowMapper)
             .optional()
             .getOrNull()
@@ -66,7 +66,7 @@ class StreamRepository(
             where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(stream.state.name, stream.streamUrl, stream.chunksBucket, stream.id)
+            .params(stream.state.name, stream.streamUrl, stream.chunksBucket, stream.id.toString())
             .update()
     }
 
@@ -77,18 +77,18 @@ class StreamRepository(
             where streamUrl = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(streamUrl, DBStreamState.AWAIT_TERMINATION)
+            .params(StreamState.AWAIT_TERMINATION.name, streamUrl)
             .update()
     }
 
-    fun updateState(id: UUID, newState: DBStreamState) {
+    fun updateState(id: UUID, newState: StreamState) {
         val sql = """
             update stream
             set state = ?
             where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(newState.name, id)
+            .params(newState.name, id.toString())
             .update()
     }
 }

@@ -1,17 +1,22 @@
 package edu.misis.runner
 
-import aws.sdk.kotlin.services.s3.S3Client
-import aws.sdk.kotlin.services.s3.model.CreateBucketRequest
-import kotlinx.coroutines.runBlocking
+import io.minio.BucketArgs
+import io.minio.MakeBucketArgs
+import io.minio.MinioClient
+import io.minio.ObjectWriteArgs
+import io.minio.PutObjectArgs
+import io.minio.UploadObjectArgs
 import org.quartz.DisallowConcurrentExecution
 import org.quartz.JobExecutionContext
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.quartz.QuartzJobBean
 import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -109,44 +114,27 @@ class StreamChunkingJob : QuartzJobBean() {
     private lateinit var streamRepository: StreamRepository
 
     @Autowired
-    private lateinit var s3Client: S3Client
+    private lateinit var s3Client: MinioClient
+
+    @Autowired
+    private lateinit var kafkaTemplate: KafkaTemplate<String, StreamEventData>
 
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
     private val scheduledExecutor = Executors.newScheduledThreadPool(1)
 
     override fun executeInternal(context: JobExecutionContext) {
-        val streamUrl: String = context.mergedJobDataMap.getString(STREAM_URL_KEY) ?:
-            throw IllegalStateException("Stream url is missing")
+        logger.info("${StreamChunkingJob::class.simpleName} started")
 
         val streamId = UUID.fromString(context.mergedJobDataMap.getString(STREAM_ID_KEY)) ?:
             throw IllegalStateException("Stream id is missing")
 
         // Do not start stream for non-existent job
-        // Do not start stream on job recovery
+        // Start stream only for active record on job recovery
         val currentStream = streamRepository.findById(streamId)
-        when (currentStream?.state) {
-            DBStreamState.INIT_BUCKET -> TODO()
-            DBStreamState.IN_PROGRESS -> startStream(currentStream)
-            DBStreamState.AWAIT_TERMINATION, DBStreamState.TERMINATED, null -> {
-                logger.warn("Stream $streamUrl was rejected due to incorrect state")
-                // Since stream was not started, explicitly set state to terminated
-                streamRepository.updateState(streamId, DBStreamState.TERMINATED)
-                return
-            }
+        if (currentStream != null && currentStream.state == StreamState.IN_PROGRESS) {
+            startStream(currentStream)
         }
-    }
-
-    private fun initBucket(streamEntity: StreamEntity): StreamEntity = runBlocking {
-        val createBucketResponse = s3Client.createBucket(CreateBucketRequest {
-            bucket = "/chunks/${streamEntity.id}"
-        })
-        val updated = streamEntity.copy(
-            state = DBStreamState.IN_PROGRESS,
-            chunksBucket = createBucketResponse.location,
-        )
-        streamRepository.update(updated)
-        updated
     }
 
     private fun startStream(streamEntity: StreamEntity) { // todo: add bucket-related arg
@@ -161,14 +149,18 @@ class StreamChunkingJob : QuartzJobBean() {
             "-"
         ).redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
             .start()
+
         logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
         val scheduleFuture = scheduledExecutor.scheduleAtFixedRate({
             val stream = streamRepository.findById(streamEntity.id)
-            if (stream?.state == DBStreamState.AWAIT_TERMINATION) {
+            if (stream?.state == StreamState.AWAIT_TERMINATION) {
                 videoCaptureSubprocess.destroy()
                 logger.info("Stream was stopped, updating state")
-                streamRepository.updateState(streamEntity.id, DBStreamState.TERMINATED)
+                kafkaTemplate.send(
+                    STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(),
+                    StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                )
             }
         },
             0,
@@ -179,19 +171,30 @@ class StreamChunkingJob : QuartzJobBean() {
         val encodingExecutor = Executors.newSingleThreadExecutor()
         ChunkReader(videoCaptureSubprocess.inputStream).use { reader ->
             reader.readChunks()
-                .forEachIndexed { idx, chunk ->
+                .forEach { chunk ->
                     encodingExecutor.execute {
                         val encodedChunk = encoder.encode(chunk)
                         logger.info("Encoded chunk size: ${encodedChunk.size}")
 
-                        // todo: write encoded chunk to s3/redis
-
+                        val stream = ByteArrayInputStream(encodedChunk)
+                        logger.info("Uploading to s3 for stream ${streamEntity.id}...")
+                        s3Client.putObject(
+                            PutObjectArgs.builder()
+                                .stream(stream, encodedChunk.size.toLong(), ObjectWriteArgs.MIN_MULTIPART_SIZE.toLong())
+                                .bucket(streamEntity.chunksBucket)
+                                .`object`(System.currentTimeMillis().toString())
+                                .contentType("video/mp4")
+                                .build()
+                        )
+                        logger.info("Chunk was uploaded for stream ${streamEntity.id}")
                     }
                 }
         }
 
         // Cancel job to not schedule anymore
-        scheduleFuture.cancel(true)
-
+        runCatching {
+            scheduleFuture.cancel(true)
+            scheduleFuture.get()
+        }
     }
 }

@@ -1,7 +1,7 @@
 create table if not exists stream(
     id text primary key,
     state text,
-    streamUrl text,
+    streamUrl text unique,
     chunksBucket text
 );
 
