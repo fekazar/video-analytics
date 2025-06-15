@@ -27,23 +27,21 @@ class DebugController(
 
     @PostMapping("/start-job")
     fun startJob(@RequestParam("streamUrl") streamUrl: String) {
-        transactionTemplate.executeWithoutResult {
-            streamRepository.deleteIfTerminated(streamUrl)
-        }
-
-        val sampleJob = JobBuilder.newJob(StreamChunkingJob::class.java)
-            .withIdentity(streamUrl, StreamChunkingJob.JOB_GROUP)
-            .usingJobData(StreamChunkingJob.STREAM_URL_KEY, streamUrl)
-            .requestRecovery()
-            .build()
-
-        val trigger = TriggerBuilder.newTrigger()
-            .startNow()
-            .build()
+        streamRepository.deleteIfTerminated(streamUrl)
 
         transactionTemplate.executeWithoutResult {
-            val stream = streamRepository.upsert(streamUrl)
+            val stream = streamRepository.createNewStream(streamUrl)
             if (stream != null) {
+                val sampleJob = JobBuilder.newJob(StreamChunkingJob::class.java)
+                    .withIdentity(streamUrl, StreamChunkingJob.JOB_GROUP)
+                    .usingJobData(StreamChunkingJob.STREAM_ID_KEY, stream.id.toString())
+                    .requestRecovery()
+                    .build()
+
+                val trigger = TriggerBuilder.newTrigger()
+                    .startNow()
+                    .build()
+
                 scheduler.scheduleJob(sampleJob, trigger)
             }
         }
@@ -51,6 +49,6 @@ class DebugController(
 
     @PostMapping("/stop-job")
     fun stopJob(@RequestParam("streamUrl") streamUrl: URI) {
-        streamRepository.updateState(streamUrl.toString(), StreamState.AWAIT_TERMINATION)
+        streamRepository.initTermination(streamUrl.toString())
     }
 }

@@ -4,30 +4,33 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
+import java.util.UUID
 import kotlin.jvm.optionals.getOrNull
 
 private class StreamRowMapper : RowMapper<StreamEntity> {
     override fun mapRow(rs: ResultSet, rowNum: Int): StreamEntity {
         return StreamEntity(
-            rs.getString("id"),
-            StreamState.valueOf(rs.getString("state")),
+            UUID.fromString(rs.getString("id")),
+            DBStreamState.valueOf(rs.getString("state")),
+            rs.getString("streamUrl"),
+            rs.getString("")
         )
     }
 }
 
 @Repository
 class StreamRepository(
-    val jdbcClient: JdbcClient
+    private val jdbcClient: JdbcClient
 ) {
     private val rowMapper = StreamRowMapper()
 
-    fun findById(streamUrl: String): StreamEntity? {
+    fun findById(id: UUID): StreamEntity? {
         val sql = """
             select * from stream
             where id = ?
         """.trimIndent()
         return jdbcClient.sql(sql)
-            .params(streamUrl)
+            .params(id)
             .query(rowMapper)
             .optional()
             .getOrNull()
@@ -35,38 +38,57 @@ class StreamRepository(
 
     fun deleteIfTerminated(streamUrl: String) {
         val sql = """
-            delete from stream where id = ? and state = ?
+            delete from stream where streamUrl and state = ?
         """.trimIndent()
-        //jdbcTemplate.update(sql, streamUrl)
         jdbcClient.sql(sql)
-            .params(streamUrl, StreamState.TERMINATED.name)
+            .params(streamUrl, DBStreamState.TERMINATED.name)
             .update()
     }
 
-    fun upsert(streamUrl: String): StreamEntity? {
+    fun createNewStream(streamUrl: String): StreamEntity? {
         val sql = """
-            insert into stream (id, state)
-            values (?, ?)
-            on conflict (id) do nothing
+            insert into stream (id, state, streamUrl)
+            values (?, ?, ?)
+            on conflict (streamUrl) do nothing
             returning *
         """.trimIndent()
-        //return jdbcTemplate.queryForObject(sql, rowMapper, streamUrl, StreamState.IN_PROGRESS.name)
         return jdbcClient.sql(sql)
-            .params(streamUrl, StreamState.IN_PROGRESS.name)
+            .params(streamUrl, UUID.randomUUID(), DBStreamState.INIT_BUCKET.name, streamUrl)
             .query(rowMapper)
             .optional()
             .getOrNull()
-   }
+    }
 
-    fun updateState(streamUrl: String, newState: StreamState) {
+    fun update(stream: StreamEntity) {
+        val sql = """
+            update stream
+            set state = ?, streamUrl = ?, chunksBucket = ?
+            where id = ?
+        """.trimIndent()
+        jdbcClient.sql(sql)
+            .params(stream.state.name, stream.streamUrl, stream.chunksBucket, stream.id)
+            .update()
+    }
+
+    fun initTermination(streamUrl: String) {
+        val sql = """
+            update stream
+            set state = ?
+            where streamUrl = ?
+        """.trimIndent()
+        jdbcClient.sql(sql)
+            .params(streamUrl, DBStreamState.AWAIT_TERMINATION)
+            .update()
+    }
+
+    fun updateState(id: UUID, newState: DBStreamState) {
         val sql = """
             update stream
             set state = ?
             where id = ?
         """.trimIndent()
-        //jdbcTemplate.update(sql, newState.toString(), streamUrl)
         jdbcClient.sql(sql)
-            .params(newState.name, streamUrl)
+            .params(newState.name, id)
             .update()
     }
 }

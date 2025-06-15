@@ -1,7 +1,9 @@
 package edu.misis.runner
 
+import aws.sdk.kotlin.services.s3.S3Client
+import aws.sdk.kotlin.services.s3.model.CreateBucketRequest
+import kotlinx.coroutines.runBlocking
 import org.quartz.DisallowConcurrentExecution
-import org.quartz.InterruptableJob
 import org.quartz.JobExecutionContext
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -9,6 +11,7 @@ import org.springframework.scheduling.quartz.QuartzJobBean
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -95,39 +98,62 @@ class ChunkMP4Encoder {
 }
 
 @DisallowConcurrentExecution
-class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
+class StreamChunkingJob : QuartzJobBean() {
     companion object {
         const val JOB_GROUP = "streamChunking"
         const val STREAM_URL_KEY = "streamUrl"
+        const val STREAM_ID_KEY = "id"
     }
 
     @Autowired
     private lateinit var streamRepository: StreamRepository
 
+    @Autowired
+    private lateinit var s3Client: S3Client
+
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
     private val scheduledExecutor = Executors.newScheduledThreadPool(1)
-
-    private var videoCaptureSubprocess: Process? = null
 
     override fun executeInternal(context: JobExecutionContext) {
         val streamUrl: String = context.mergedJobDataMap.getString(STREAM_URL_KEY) ?:
             throw IllegalStateException("Stream url is missing")
 
+        val streamId = UUID.fromString(context.mergedJobDataMap.getString(STREAM_ID_KEY)) ?:
+            throw IllegalStateException("Stream id is missing")
+
         // Do not start stream for non-existent job
         // Do not start stream on job recovery
-        val currentStream = streamRepository.findById(streamUrl)
-        if (currentStream == null || currentStream.state != StreamState.IN_PROGRESS) {
-            logger.warn("Stream $streamUrl was rejected due to incorrect state")
-            // Since stream was not started, explicitly set state to terminated
-            streamRepository.updateState(streamUrl, StreamState.TERMINATED)
-            return
+        val currentStream = streamRepository.findById(streamId)
+        when (currentStream?.state) {
+            DBStreamState.INIT_BUCKET -> TODO()
+            DBStreamState.IN_PROGRESS -> startStream(currentStream)
+            DBStreamState.AWAIT_TERMINATION, DBStreamState.TERMINATED, null -> {
+                logger.warn("Stream $streamUrl was rejected due to incorrect state")
+                // Since stream was not started, explicitly set state to terminated
+                streamRepository.updateState(streamId, DBStreamState.TERMINATED)
+                return
+            }
         }
+    }
 
-        videoCaptureSubprocess = ProcessBuilder(
+    private fun initBucket(streamEntity: StreamEntity): StreamEntity = runBlocking {
+        val createBucketResponse = s3Client.createBucket(CreateBucketRequest {
+            bucket = "/chunks/${streamEntity.id}"
+        })
+        val updated = streamEntity.copy(
+            state = DBStreamState.IN_PROGRESS,
+            chunksBucket = createBucketResponse.location,
+        )
+        streamRepository.update(updated)
+        updated
+    }
+
+    private fun startStream(streamEntity: StreamEntity) { // todo: add bucket-related arg
+        val videoCaptureSubprocess = ProcessBuilder(
             "ffmpeg",
             "-rtsp_transport", "tcp",
-            "-i", streamUrl,
+            "-i", streamEntity.streamUrl,
             "-vf", "scale=$WIDTH:$HEIGHT,fps=$FPS",
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
@@ -138,11 +164,11 @@ class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
         logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
         val scheduleFuture = scheduledExecutor.scheduleAtFixedRate({
-            val stream = streamRepository.findById(streamUrl)
-            if (stream?.state == StreamState.AWAIT_TERMINATION) {
-                videoCaptureSubprocess!!.destroy()
+            val stream = streamRepository.findById(streamEntity.id)
+            if (stream?.state == DBStreamState.AWAIT_TERMINATION) {
+                videoCaptureSubprocess.destroy()
                 logger.info("Stream was stopped, updating state")
-                streamRepository.updateState(streamUrl, StreamState.TERMINATED)
+                streamRepository.updateState(streamEntity.id, DBStreamState.TERMINATED)
             }
         },
             0,
@@ -151,29 +177,21 @@ class StreamChunkingJob : InterruptableJob, QuartzJobBean() {
         )
 
         val encodingExecutor = Executors.newSingleThreadExecutor()
-        ChunkReader(videoCaptureSubprocess!!.inputStream).use { reader ->
+        ChunkReader(videoCaptureSubprocess.inputStream).use { reader ->
             reader.readChunks()
                 .forEachIndexed { idx, chunk ->
                     encodingExecutor.execute {
                         val encodedChunk = encoder.encode(chunk)
-                        // todo: write encoded chunk to s3/redis
                         logger.info("Encoded chunk size: ${encodedChunk.size}")
-                        //File("encoded-$idx.mp4").writeBytes(encodedChunk)
+
+                        // todo: write encoded chunk to s3/redis
+
                     }
                 }
         }
 
         // Cancel job to not schedule anymore
         scheduleFuture.cancel(true)
-    }
 
-    override fun interrupt() {
-        logger.info("Interrupting rtsp client subprocess...")
-        if (videoCaptureSubprocess != null) {
-            videoCaptureSubprocess!!.destroy()
-            logger.info("Video capture subprocess was destroyed")
-        } else {
-            logger.info("Video capture subprocess was not initialized")
-        }
     }
 }
