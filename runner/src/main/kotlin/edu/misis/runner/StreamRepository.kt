@@ -36,12 +36,12 @@ class StreamRepository(
             .getOrNull()
     }
 
-    fun deleteIfTerminated(streamUrl: String) {
+    fun deleteById(id: UUID) {
         val sql = """
-            delete from stream where streamUrl = ? and state = ?
+            delete from stream where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(streamUrl, StreamState.TERMINATED.name)
+            .params(id.toString())
             .update()
     }
 
@@ -67,17 +67,6 @@ class StreamRepository(
         """.trimIndent()
         jdbcClient.sql(sql)
             .params(stream.state.name, stream.streamUrl, stream.chunksBucket, stream.id.toString())
-            .update()
-    }
-
-    fun initTermination(streamUrl: String) {
-        val sql = """
-            update stream
-            set state = ?
-            where streamUrl = ?
-        """.trimIndent()
-        jdbcClient.sql(sql)
-            .params(StreamState.AWAIT_TERMINATION.name, streamUrl)
             .update()
     }
 

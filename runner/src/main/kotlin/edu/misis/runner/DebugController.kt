@@ -29,19 +29,14 @@ class DebugController(
     @PostMapping("/start-job")
     fun startJob(@RequestParam("streamUrl") streamUrl: String) {
         logger.info("Start request for: $streamUrl")
-
-        streamRepository.deleteIfTerminated(streamUrl)
-        transactionTemplate.executeWithoutResult {
-            val stream = streamRepository.createNewStream(streamUrl)
-            if (stream != null) {
-                // todo: consider outbox
-                kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap()))
-            }
+        val stream = streamRepository.createNewStream(streamUrl)
+        if (stream != null) {
+            kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap()))
         }
     }
 
     @PostMapping("/stop-job")
-    fun stopJob(@RequestParam("streamUrl") streamUrl: URI) {
-        //kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap()))
+    fun stopJob(@RequestParam("streamId") streamId: UUID) {
+        kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM, emptyMap()))
     }
 }

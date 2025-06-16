@@ -86,11 +86,11 @@ class StreamStateMachineConfig(
     }
 
     fun stopStream(stream: StreamEntity) {
-        streamRepository.initTermination(stream.streamUrl)
+        streamRepository.updateState(stream.id, StreamState.AWAIT_TERMINATION)
     }
 
     fun clearStream(streamId: UUID) {
-        // todo: clear record from db
+        streamRepository.deleteById(streamId)
     }
 
     @KafkaListener(

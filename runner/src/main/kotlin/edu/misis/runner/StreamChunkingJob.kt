@@ -1,27 +1,22 @@
 package edu.misis.runner
 
-import io.minio.BucketArgs
-import io.minio.MakeBucketArgs
 import io.minio.MinioClient
 import io.minio.ObjectWriteArgs
 import io.minio.PutObjectArgs
-import io.minio.UploadObjectArgs
-import org.quartz.DisallowConcurrentExecution
-import org.quartz.JobExecutionContext
-import org.quartz.JobExecutionException
+import org.quartz.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.quartz.QuartzJobBean
-import java.io.BufferedInputStream
-import java.io.ByteArrayInputStream
-import java.io.IOException
-import java.io.InputStream
+import org.springframework.transaction.support.TransactionTemplate
+import java.io.*
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.pow
 
 const val WIDTH = 1280
 const val HEIGHT = 720
@@ -44,7 +39,7 @@ class ChunkReader(
             val bytesRead = try {
                 bufferedStream.readNBytes(buffer, 0, bufferSize)
             } catch (e: IOException) {
-                logger.warn("Exception awaiting new chunk")
+                logger.warn("Exception awaiting new chunk ${e.message}")
                 0
             }
 
@@ -83,12 +78,12 @@ class ChunkMP4Encoder {
             "-f", "mp4",
             "pipe:1"
         ).redirectInput(ProcessBuilder.Redirect.PIPE)
-            .redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
 
         logger.info("Encoder subprocess: ${process.pid()}")
 
-        CompletableFuture.runAsync {
+        val chunksSupplyingFuture = CompletableFuture.runAsync {
             process.outputStream.write(chunk)
             process.outputStream.flush()
             process.outputStream.close()
@@ -97,6 +92,7 @@ class ChunkMP4Encoder {
         val result = process.inputStream.readAllBytes()
 
         val code = process.waitFor()
+        chunksSupplyingFuture.cancel(true)
         if (code != 0) {
             throw IllegalStateException("Encoder subprocess failed")
         }
@@ -105,11 +101,13 @@ class ChunkMP4Encoder {
 }
 
 @DisallowConcurrentExecution
+@PersistJobDataAfterExecution
 class StreamChunkingJob : QuartzJobBean() {
     companion object {
         const val JOB_GROUP = "streamChunking"
-        const val STREAM_URL_KEY = "streamUrl"
         const val STREAM_ID_KEY = "id"
+        const val RETRY_COUNT = "retryCount"
+        const val RETRY_LIMIT = 3
     }
 
     @Autowired
@@ -121,6 +119,12 @@ class StreamChunkingJob : QuartzJobBean() {
     @Autowired
     private lateinit var kafkaTemplate: KafkaTemplate<String, StreamEventData>
 
+    @Autowired
+    private lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired
+    private lateinit var scheduler: Scheduler
+
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
     private val scheduledExecutor = Executors.newScheduledThreadPool(1)
@@ -131,41 +135,40 @@ class StreamChunkingJob : QuartzJobBean() {
         val streamId = UUID.fromString(context.mergedJobDataMap.getString(STREAM_ID_KEY)) ?:
             throw IllegalStateException("Stream id is missing")
 
-        // Do not start stream for non-existent job
+        // Do not start job for non-existent stream
         // Start stream only for active record on job recovery
         val currentStream = streamRepository.findById(streamId)
         if (currentStream != null && currentStream.state == StreamState.IN_PROGRESS) {
-            startStream(currentStream)
+            startStream(currentStream, context)
         }
     }
 
-    private fun startStream(streamEntity: StreamEntity) { // todo: add bucket-related arg
+    private fun startStream(stream: StreamEntity, context: JobExecutionContext) {
         val videoCaptureSubprocess = ProcessBuilder(
             "ffmpeg",
             "-rtsp_transport", "tcp",
-            "-i", streamEntity.streamUrl,
+            "-i", stream.streamUrl,
             "-vf", "scale=$WIDTH:$HEIGHT,fps=$FPS",
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
             "-c:v", "rawvideo",
+            "-loglevel", "fatal",
+            "-hide_banner",
+            "-nostats",
             "-"
-        ).redirectError(ProcessBuilder.Redirect.DISCARD) // todo: consider inherit
+        ).redirectError(ProcessBuilder.Redirect.PIPE)
             .start()
 
         logger.info("Started video capture subprocess: ${videoCaptureSubprocess!!.pid()}")
 
         val completedByRequest = AtomicBoolean(false)
 
-        val scheduleFuture = scheduledExecutor.scheduleAtFixedRate({
-            val stream = streamRepository.findById(streamEntity.id)
-            if (stream?.state == StreamState.AWAIT_TERMINATION) {
+        val terminationMonitoringFuture = scheduledExecutor.scheduleAtFixedRate({
+            val actualStream = streamRepository.findById(stream.id)
+            if (actualStream?.state == StreamState.AWAIT_TERMINATION) {
                 videoCaptureSubprocess.destroy()
-                logger.info("Stream was stopped, updating state")
+                logger.info("ffmpeg stream was stopped")
                 completedByRequest.set(true)
-                kafkaTemplate.send(
-                    STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(),
-                    StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
-                )
             }
         },
             0,
@@ -173,7 +176,13 @@ class StreamChunkingJob : QuartzJobBean() {
             TimeUnit.SECONDS
         )
 
+        val fatalErrorsFuture = CompletableFuture.supplyAsync {
+            val reader = BufferedReader(InputStreamReader(videoCaptureSubprocess.errorStream))
+            reader.use { it.readLines() }
+        }
+
         val encodingExecutor = Executors.newSingleThreadExecutor()
+
         ChunkReader(videoCaptureSubprocess.inputStream).use { reader ->
             reader.readChunks()
                 .forEach { chunk ->
@@ -181,32 +190,105 @@ class StreamChunkingJob : QuartzJobBean() {
                         val encodedChunk = encoder.encode(chunk)
                         logger.info("Encoded chunk size: ${encodedChunk.size}")
 
-                        val stream = ByteArrayInputStream(encodedChunk)
-                        logger.info("Uploading to s3 for stream ${streamEntity.id}...")
+                        val bytesStream = ByteArrayInputStream(encodedChunk)
+                        logger.info("Uploading to s3 for stream ${stream.id}...")
                         s3Client.putObject(
                             PutObjectArgs.builder()
-                                .stream(stream, encodedChunk.size.toLong(), ObjectWriteArgs.MIN_MULTIPART_SIZE.toLong())
-                                .bucket(streamEntity.chunksBucket)
+                                .stream(bytesStream, encodedChunk.size.toLong(), ObjectWriteArgs.MIN_MULTIPART_SIZE.toLong())
+                                .bucket(stream.chunksBucket)
                                 .`object`(System.currentTimeMillis().toString())
                                 .contentType("video/mp4")
                                 .build()
                         )
-                        logger.info("Chunk was uploaded for stream ${streamEntity.id}")
+                        logger.info("Chunk was uploaded for stream ${stream.id}")
+
+                        // todo: notify inference about new chunk to handle
                     }
                 }
         }
 
-        // Cancel job to not schedule anymore
+        // Stop polling db
         runCatching {
-            scheduleFuture.cancel(true)
-            scheduleFuture.get()
+            terminationMonitoringFuture.cancel(true)
+            terminationMonitoringFuture.get()
+        }
+
+        val code = videoCaptureSubprocess.waitFor()
+        logger.info("Video capturing process finished with code: $code")
+
+        val fatalErrors = fatalErrorsFuture.get()
+        if (fatalErrors.isNotEmpty()) {
+            logger.error("Encountered following ffmpeg fatal errors:")
+            fatalErrors.forEach {
+                logger.error("ffmpeg error for stream ${stream.id}: $it")
+            }
         }
 
         if (!completedByRequest.get()) {
-            logger.warn("StreamChunkingJob has completed unexpectedly")
-            throw JobExecutionException("StreamChunkingJob has completed unexpectedly", true)
-        }
+            if (fatalErrors.isNotEmpty()) {
+                // do not restart job after limit was exceeded
+                val currentRetryCount = if (context.mergedJobDataMap.containsKey(RETRY_COUNT)) {
+                    context.mergedJobDataMap.getIntValue(RETRY_COUNT)
+                } else {
+                    0
+                }
+                if (currentRetryCount != RETRY_LIMIT - 1) {
+                    logger.warn(
+                        "Rescheduling job for for stream: ${stream.id}, ${stream.streamUrl}. Attempt ${currentRetryCount + 1} / $RETRY_LIMIT"
+                    )
 
-        logger.info("Stream chunking job completes normally")
+                    val chunkingJob = JobBuilder.newJob(StreamChunkingJob::class.java)
+                        .withIdentity(stream.streamUrl, JOB_GROUP)
+                        .usingJobData(STREAM_ID_KEY, stream.id.toString())
+                        .usingJobData(RETRY_COUNT, (currentRetryCount + 1).toString())
+                        .requestRecovery()
+                        .build()
+
+                    val delayMillis = ((2.0 + Math.random()).pow(currentRetryCount + 1) * 1000).toLong()
+
+                    val trigger = TriggerBuilder.newTrigger()
+                        .startAt(Date.from(Instant.now().plusMillis(delayMillis)))
+                        .forJob(chunkingJob)
+                        .build()
+
+                    transactionTemplate.executeWithoutResult {
+                        scheduler.deleteJob(chunkingJob.key)
+                        scheduler.scheduleJob(chunkingJob, trigger)
+                    }
+                } else {
+                    // todo: run in kafka transaction
+                    kafkaTemplate.send(
+                        STATE_MACHINE_EVENTS_TOPIC,
+                        stream.id.toString(),
+                        StreamEventData(StreamEvent.STOP_STREAM, emptyMap()),
+                    )
+
+                    kafkaTemplate.send(
+                        STATE_MACHINE_EVENTS_TOPIC,
+                        stream.id.toString(),
+                        StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                    )
+                    logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}")
+                }
+            } else {
+                // The process was killed due to instance restart
+                throw JobExecutionException("StreamChunkingJob has completed unexpectedly, but without ffmpeg errors", true)
+            }
+        } else {
+            scheduledExecutor.shutdown()
+            try {
+                scheduledExecutor.awaitTermination(10, TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                logger.warn("Couldn't await chunking job scheduler termination. Using force shutdown")
+                scheduledExecutor.shutdownNow()
+            }
+            logger.info("Stream chunking job completes normally")
+
+            kafkaTemplate.send(
+                STATE_MACHINE_EVENTS_TOPIC,
+                stream.id.toString(),
+                StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+            )
+        }
     }
 }
