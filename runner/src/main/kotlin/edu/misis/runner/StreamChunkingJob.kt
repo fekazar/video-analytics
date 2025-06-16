@@ -1,8 +1,7 @@
 package edu.misis.runner
 
-import io.minio.MinioClient
-import io.minio.ObjectWriteArgs
-import io.minio.PutObjectArgs
+import io.minio.*
+import io.minio.http.Method
 import org.quartz.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -10,6 +9,7 @@ import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.quartz.QuartzJobBean
 import org.springframework.transaction.support.TransactionTemplate
 import java.io.*
+import java.net.URI
 import java.time.Instant
 import java.util.*
 import java.util.concurrent.CompletableFuture
@@ -18,12 +18,18 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.pow
 
+
 const val WIDTH = 1280
 const val HEIGHT = 720
 const val FPS = 10
 const val CHUNK_DURATION_SECONDS = 10
 
-class ChunkReader(
+private class Chunk(
+    val createdAt: Instant,
+    val data: ByteArray,
+)
+
+private class ChunkReader(
     inputStream: InputStream,
 ) : AutoCloseable {
     private val bytesPerFrame = WIDTH * HEIGHT * 3 // RGB = 3 bytes/pixel
@@ -32,10 +38,11 @@ class ChunkReader(
 
     private val logger = LoggerFactory.getLogger(ChunkReader::class.java)
 
-    fun readChunks(): Sequence<ByteArray> = sequence {
+    fun readChunks(): Sequence<Chunk> = sequence {
         var hasReadWholeChunk = true
-        val buffer = ByteArray(bufferSize)
         while (hasReadWholeChunk) {
+            val buffer = ByteArray(bufferSize)
+            val createdAt = Instant.now()
             val bytesRead = try {
                 bufferedStream.readNBytes(buffer, 0, bufferSize)
             } catch (e: IOException) {
@@ -47,8 +54,7 @@ class ChunkReader(
             if (bytesRead != bufferSize) {
                 hasReadWholeChunk = false
             } else {
-                // todo: try allocating new array instead of copy
-                yield(buffer.copyOf())
+                yield(Chunk(createdAt, buffer))
             }
         }
     }
@@ -125,6 +131,9 @@ class StreamChunkingJob : QuartzJobBean() {
     @Autowired
     private lateinit var scheduler: Scheduler
 
+    @Autowired
+    private lateinit var inference: Inference
+
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
     private val scheduledExecutor = Executors.newScheduledThreadPool(1)
@@ -187,22 +196,20 @@ class StreamChunkingJob : QuartzJobBean() {
             reader.readChunks()
                 .forEach { chunk ->
                     encodingExecutor.execute {
-                        val encodedChunk = encoder.encode(chunk)
+                        val encodedChunk = encoder.encode(chunk.data)
                         logger.info("Encoded chunk size: ${encodedChunk.size}")
 
-                        val bytesStream = ByteArrayInputStream(encodedChunk)
-                        logger.info("Uploading to s3 for stream ${stream.id}...")
-                        s3Client.putObject(
-                            PutObjectArgs.builder()
-                                .stream(bytesStream, encodedChunk.size.toLong(), ObjectWriteArgs.MIN_MULTIPART_SIZE.toLong())
-                                .bucket(stream.chunksBucket)
-                                .`object`(System.currentTimeMillis().toString())
-                                .contentType("video/mp4")
-                                .build()
-                        )
-                        logger.info("Chunk was uploaded for stream ${stream.id}")
+                        val objectWriteResponse = uploadChunk(stream, encodedChunk)
+                        val url = getPreSharedUrl(objectWriteResponse.bucket(), objectWriteResponse.`object`())
 
-                        // todo: notify inference about new chunk to handle
+                        inference.startInference(
+                            stream.id,
+                            ChunkMessageData(
+                                URI(stream.streamUrl),
+                                url,
+                                chunk.createdAt,
+                            )
+                        )
                     }
                 }
         }
@@ -289,6 +296,38 @@ class StreamChunkingJob : QuartzJobBean() {
                 stream.id.toString(),
                 StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
             )
+        }
+    }
+
+    private fun uploadChunk(stream: StreamEntity, encodedChunk: ByteArray): ObjectWriteResponse {
+        val bytesStream = ByteArrayInputStream(encodedChunk)
+        logger.info("Uploading to s3 for stream ${stream.id}...")
+        val res = s3Client.putObject(
+            PutObjectArgs.builder()
+                .stream(bytesStream, encodedChunk.size.toLong(), ObjectWriteArgs.MIN_MULTIPART_SIZE.toLong())
+                .bucket(stream.chunksBucket)
+                .`object`(System.currentTimeMillis().toString())
+                .contentType("video/mp4")
+                .build()
+        )
+        logger.info("Chunk was uploaded for stream ${stream.id}")
+        return res
+    }
+
+    private fun getPreSharedUrl(bucket: String, obj: String): URI {
+        logger.info("Generating pre signed url...")
+        val reqParams = mapOf("response-content-type" to "video/mp4")
+        return s3Client.getPresignedObjectUrl(
+            GetPresignedObjectUrlArgs.builder()
+                .method(Method.GET)
+                .bucket(bucket)
+                .`object`(obj)
+                .expiry(2, TimeUnit.HOURS)
+                .extraQueryParams(reqParams)
+                .build()
+        ).let {
+            logger.info("Generated presigned url")
+            URI(it)
         }
     }
 }
