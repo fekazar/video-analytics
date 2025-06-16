@@ -21,11 +21,9 @@ const val STREAM_STATE_MACHINE_GROUP = "stream-state-machine-group"
 
 enum class StreamState {
     INITIAL,
-    INITIALIZING_BUCKET,
     BUCKET_INITIALIZED,
     IN_PROGRESS,
     AWAIT_TERMINATION,
-    TERMINATED,
 }
 
 enum class StreamEvent {
@@ -60,6 +58,7 @@ class StreamStateMachineConfig(
         s3Client.makeBucket(MakeBucketArgs.builder().bucket(location).build())
         val updated = stream.copy(
             chunksBucket = location,
+            state = StreamState.BUCKET_INITIALIZED,
         )
         streamRepository.update(updated)
         kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.START_STREAM, emptyMap()))
@@ -89,8 +88,8 @@ class StreamStateMachineConfig(
         streamRepository.updateState(stream.id, StreamState.AWAIT_TERMINATION)
     }
 
-    fun clearStream(streamId: UUID) {
-        streamRepository.deleteById(streamId)
+    fun clearStream(stream: StreamEntity) {
+        streamRepository.deleteById(stream.id)
     }
 
     @KafkaListener(
@@ -112,19 +111,27 @@ class StreamStateMachineConfig(
 
         runCatching {
             // Since only one consumer can modify the state of the stream, it is safe to perform checks as below
-            when (event.type) {
-                StreamEvent.INITIALIZE_BUCKET -> initializeBucket(stream)
-                StreamEvent.START_STREAM -> startStream(stream)
-                StreamEvent.STOP_STREAM -> if (stream.state in setOf(
-                        StreamState.INITIAL,
-                        StreamState.BUCKET_INITIALIZED,
-                        StreamState.IN_PROGRESS
-                    )
-                ) {
+            when (stream.state) {
+                StreamState.INITIAL -> if (event.type == StreamEvent.INITIALIZE_BUCKET) {
+                    initializeBucket(stream)
+                } else if (event.type == StreamEvent.STOP_STREAM) {
+                    clearStream(stream)
+                }
+
+                StreamState.BUCKET_INITIALIZED -> if (event.type == StreamEvent.START_STREAM) {
+                    startStream(stream)
+                } else if (event.type == StreamEvent.STOP_STREAM) {
+                    // todo: consider deleting bucket
+                    clearStream(stream)
+                }
+
+                StreamState.IN_PROGRESS -> if (event.type == StreamEvent.STOP_STREAM) {
                     stopStream(stream)
                 }
 
-                StreamEvent.STREAM_TERMINATED -> clearStream(streamId)
+                StreamState.AWAIT_TERMINATION -> if (event.type == StreamEvent.STREAM_TERMINATED) {
+                    clearStream(stream)
+                }
             }
         }.onFailure {
             logger.error("Failed to process event: ", it)
