@@ -1,0 +1,9 @@
+setuptools==80.9.0
+confluent-kafka==2.3.0
+opencv-python==4.8.1.78
+numpy==1.26.4
+python-dotenv==1.0.0
+loguru==0.7.2
+requests==2.31.0
+six>=1.16.0
+jsonschema==4.21.1

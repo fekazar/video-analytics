@@ -208,6 +208,7 @@ class StreamChunkingJob : QuartzJobBean() {
                                 URI(stream.streamUrl),
                                 url,
                                 chunk.createdAt,
+                                FPS,
                             )
                         )
                     }

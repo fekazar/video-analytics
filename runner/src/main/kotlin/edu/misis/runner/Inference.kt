@@ -12,6 +12,7 @@ data class ChunkMessageData(
     val streamUrl: URI,
     val preSharedUrl: URI,
     val createdAt: Instant,
+    val fps: Int,
 )
 
 @Component
