@@ -1,6 +1,5 @@
 package edu.misis.runner
 
-import org.quartz.Scheduler
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -29,7 +28,7 @@ class StreamController(
         val stream = try {
             streamRepository.createNewStream(streamUrl)?.also {
                 kafkaTemplate.send(
-                    STATE_MACHINE_EVENTS_TOPIC,
+                    STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     it.id.toString(),
                     StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap())
                 )
@@ -49,7 +48,7 @@ class StreamController(
 
     @PostMapping("/stop-job")
     fun stopJob(@RequestParam("streamId") streamId: UUID): ResponseEntity<Unit> {
-        kafkaTemplate.send(STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM, emptyMap()))
+        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM, emptyMap()))
         return ResponseEntity.status(HttpStatus.ACCEPTED)
             .body(Unit)
     }

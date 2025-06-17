@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.pow
 
-
 const val WIDTH = 1280
 const val HEIGHT = 720
 const val FPS = 10
@@ -64,7 +63,7 @@ private class ChunkReader(
     }
 }
 
-class ChunkMP4Encoder {
+private class ChunkMP4Encoder {
     private val logger = LoggerFactory.getLogger(ChunkMP4Encoder::class.java)
 
     fun encode(chunk: ByteArray): ByteArray {
@@ -136,7 +135,6 @@ class StreamChunkingJob : QuartzJobBean() {
 
     private val logger = LoggerFactory.getLogger(StreamChunkingJob::class.java)
     private val encoder = ChunkMP4Encoder()
-    private val scheduledExecutor = Executors.newScheduledThreadPool(1)
 
     override fun executeInternal(context: JobExecutionContext) {
         logger.info("${StreamChunkingJob::class.simpleName} started")
@@ -152,7 +150,7 @@ class StreamChunkingJob : QuartzJobBean() {
             } else {
                 logger.info("Stream was in inappropriate state (${currentStream.state} on job start. Terminating.")
                 kafkaTemplate.send(
-                    STATE_MACHINE_EVENTS_TOPIC,
+                    STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     currentStream.id.toString(),
                     StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
                 )
@@ -180,6 +178,7 @@ class StreamChunkingJob : QuartzJobBean() {
 
         val completedByRequest = AtomicBoolean(false)
 
+        val scheduledExecutor = Executors.newScheduledThreadPool(1)
         val terminationMonitoringFuture = scheduledExecutor.scheduleAtFixedRate({
             val actualStream = streamRepository.findById(stream.id)
             if (actualStream?.state == StreamState.AWAIT_TERMINATION) {
@@ -274,7 +273,7 @@ class StreamChunkingJob : QuartzJobBean() {
                 } else {
                     logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}. Terminating.")
                     kafkaTemplate.send(
-                        STATE_MACHINE_EVENTS_TOPIC,
+                        STREAM_STATE_MACHINE_EVENTS_TOPIC,
                         stream.id.toString(),
                         StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
                     )
@@ -294,7 +293,7 @@ class StreamChunkingJob : QuartzJobBean() {
             logger.info("Stream chunking job completes normally")
 
             kafkaTemplate.send(
-                STATE_MACHINE_EVENTS_TOPIC,
+                STREAM_STATE_MACHINE_EVENTS_TOPIC,
                 stream.id.toString(),
                 StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
             )
