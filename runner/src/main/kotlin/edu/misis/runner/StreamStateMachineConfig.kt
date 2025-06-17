@@ -2,7 +2,6 @@ package edu.misis.runner
 
 import io.minio.MakeBucketArgs
 import io.minio.MinioClient
-import jakarta.annotation.PostConstruct
 import org.quartz.JobBuilder
 import org.quartz.Scheduler
 import org.quartz.TriggerBuilder
@@ -48,11 +47,6 @@ class StreamStateMachineConfig(
 ) {
     private val logger = LoggerFactory.getLogger(StreamStateMachineConfig::class.java)
 
-    @PostConstruct
-    fun postConstruct() {
-        scheduler.start()
-    }
-
     fun initializeBucket(stream: StreamEntity) {
         val location = "chunks-${stream.id}"
         s3Client.makeBucket(MakeBucketArgs.builder().bucket(location).build())
@@ -68,7 +62,7 @@ class StreamStateMachineConfig(
         logger.info("Scheduling stream chunking job...")
 
         val sampleJob = JobBuilder.newJob(StreamChunkingJob::class.java)
-            .withIdentity(stream.streamUrl, StreamChunkingJob.JOB_GROUP)
+            .withIdentity(stream.streamUrl.toString(), StreamChunkingJob.JOB_GROUP)
             .usingJobData(StreamChunkingJob.STREAM_ID_KEY, stream.id.toString())
             .requestRecovery()
             .build()

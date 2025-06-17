@@ -3,6 +3,7 @@ package edu.misis.runner
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
+import java.net.URI
 import java.sql.ResultSet
 import java.util.UUID
 import kotlin.jvm.optionals.getOrNull
@@ -12,7 +13,7 @@ private class StreamRowMapper : RowMapper<StreamEntity> {
         return StreamEntity(
             UUID.fromString(rs.getString("id")),
             StreamState.valueOf(rs.getString("state")),
-            rs.getString("streamUrl"),
+            URI(rs.getString("streamUrl")),
             rs.getString("chunksBucket")
         )
     }
@@ -36,6 +37,18 @@ class StreamRepository(
             .getOrNull()
     }
 
+    fun findByStreamUrl(streamUrl: URI): StreamEntity? {
+        val sql = """
+            select * from stream
+            where streamUrl = ?
+        """.trimIndent()
+        return jdbcClient.sql(sql)
+            .params(streamUrl.toString())
+            .query(rowMapper)
+            .optional()
+            .getOrNull()
+    }
+
     fun deleteById(id: UUID) {
         val sql = """
             delete from stream where id = ?
@@ -45,7 +58,7 @@ class StreamRepository(
             .update()
     }
 
-    fun createNewStream(streamUrl: String): StreamEntity? {
+    fun createNewStream(streamUrl: URI): StreamEntity? {
         val sql = """
             insert into stream (id, state, streamUrl)
             values (?, ?, ?)
@@ -53,7 +66,7 @@ class StreamRepository(
             returning *
         """.trimIndent()
         return jdbcClient.sql(sql)
-            .params(UUID.randomUUID(), StreamState.INITIAL.name, streamUrl)
+            .params(UUID.randomUUID(), StreamState.INITIAL.name, streamUrl.toString())
             .query(rowMapper)
             .optional()
             .getOrNull()
@@ -66,7 +79,7 @@ class StreamRepository(
             where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(stream.state.name, stream.streamUrl, stream.chunksBucket, stream.id.toString())
+            .params(stream.state.name, stream.streamUrl.toString(), stream.chunksBucket, stream.id.toString())
             .update()
     }
 

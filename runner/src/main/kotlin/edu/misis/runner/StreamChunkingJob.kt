@@ -164,7 +164,7 @@ class StreamChunkingJob : QuartzJobBean() {
         val videoCaptureSubprocess = ProcessBuilder(
             "ffmpeg",
             "-rtsp_transport", "tcp",
-            "-i", stream.streamUrl,
+            "-i", stream.streamUrl.toString(),
             "-vf", "scale=$WIDTH:$HEIGHT,fps=$FPS",
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
@@ -213,7 +213,7 @@ class StreamChunkingJob : QuartzJobBean() {
                         inference.startInference(
                             stream.id,
                             ChunkMessageData(
-                                URI(stream.streamUrl),
+                                stream.streamUrl,
                                 url,
                                 chunk.createdAt,
                                 FPS,
@@ -254,7 +254,7 @@ class StreamChunkingJob : QuartzJobBean() {
                     )
 
                     val chunkingJob = JobBuilder.newJob(StreamChunkingJob::class.java)
-                        .withIdentity(stream.streamUrl, JOB_GROUP)
+                        .withIdentity(stream.streamUrl.toString(), JOB_GROUP)
                         .usingJobData(STREAM_ID_KEY, stream.id.toString())
                         .usingJobData(RETRY_COUNT, (currentRetryCount + 1).toString())
                         .requestRecovery()
