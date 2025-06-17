@@ -5,6 +5,8 @@ import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import java.net.URI
 import java.sql.ResultSet
+import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 import kotlin.jvm.optionals.getOrNull
 
@@ -14,7 +16,8 @@ private class StreamRowMapper : RowMapper<StreamEntity> {
             UUID.fromString(rs.getString("id")),
             StreamState.valueOf(rs.getString("state")),
             URI(rs.getString("streamUrl")),
-            rs.getString("chunksBucket")
+            rs.getString("chunksBucket"),
+            rs.getTimestamp("updatedAt").toInstant(),
         )
     }
 }
@@ -60,13 +63,13 @@ class StreamRepository(
 
     fun createNewStream(streamUrl: URI): StreamEntity? {
         val sql = """
-            insert into stream (id, state, streamUrl)
-            values (?, ?, ?)
+            insert into stream (id, state, streamUrl, updatedAt)
+            values (?, ?, ?, ?)
             on conflict (streamUrl) do nothing
             returning *
         """.trimIndent()
         return jdbcClient.sql(sql)
-            .params(UUID.randomUUID(), StreamState.INITIAL.name, streamUrl.toString())
+            .params(UUID.randomUUID(), StreamState.INITIAL.name, streamUrl.toString(), Timestamp.from(Instant.now()),)
             .query(rowMapper)
             .optional()
             .getOrNull()
@@ -75,22 +78,27 @@ class StreamRepository(
     fun update(stream: StreamEntity) {
         val sql = """
             update stream
-            set state = ?, streamUrl = ?, chunksBucket = ?
+            set state = ?, streamUrl = ?, chunksBucket = ?, updatedAt = ?
             where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(stream.state.name, stream.streamUrl.toString(), stream.chunksBucket, stream.id.toString())
-            .update()
+            .params(
+                stream.state.name,
+                stream.streamUrl.toString(),
+                stream.chunksBucket,
+                Timestamp.from(Instant.now()),
+                stream.id.toString(),
+            ).update()
     }
 
     fun updateState(id: UUID, newState: StreamState) {
         val sql = """
             update stream
-            set state = ?
+            set state = ?, updatedAt = ?
             where id = ?
         """.trimIndent()
         jdbcClient.sql(sql)
-            .params(newState.name, id.toString())
+            .params(newState.name, Timestamp.from(Instant.now()), id.toString())
             .update()
     }
 }
