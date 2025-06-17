@@ -120,13 +120,16 @@ class StreamStateMachineConfig(
 
                 StreamState.BUCKET_INITIALIZED -> if (event.type == StreamEvent.START_STREAM) {
                     startStream(stream)
-                } else if (event.type == StreamEvent.STOP_STREAM) {
+                } else if (event.type == StreamEvent.STOP_STREAM || event.type == StreamEvent.STREAM_TERMINATED) {
                     // todo: consider deleting bucket
+                    // No active stream to stop, clearing
                     clearStream(stream)
                 }
 
                 StreamState.IN_PROGRESS -> if (event.type == StreamEvent.STOP_STREAM) {
                     stopStream(stream)
+                } else if (event.type == StreamEvent.STREAM_TERMINATED) {
+                    clearStream(stream)
                 }
 
                 StreamState.AWAIT_TERMINATION -> if (event.type == StreamEvent.STREAM_TERMINATED) {

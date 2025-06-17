@@ -146,9 +146,17 @@ class StreamChunkingJob : QuartzJobBean() {
 
         // Do not start job for non-existent stream
         // Start stream only for active record on job recovery
-        val currentStream = streamRepository.findById(streamId)
-        if (currentStream != null && currentStream.state == StreamState.IN_PROGRESS) {
-            startStream(currentStream, context)
+        streamRepository.findById(streamId)?.let { currentStream ->
+            if (currentStream.state == StreamState.IN_PROGRESS) {
+                startStream(currentStream, context)
+            } else {
+                logger.info("Stream was in inappropriate state (${currentStream.state} on job start. Terminating.")
+                kafkaTemplate.send(
+                    STATE_MACHINE_EVENTS_TOPIC,
+                    currentStream.id.toString(),
+                    StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                )
+            }
         }
     }
 
@@ -264,19 +272,12 @@ class StreamChunkingJob : QuartzJobBean() {
                         scheduler.scheduleJob(chunkingJob, trigger)
                     }
                 } else {
-                    // todo: run in kafka transaction
-                    kafkaTemplate.send(
-                        STATE_MACHINE_EVENTS_TOPIC,
-                        stream.id.toString(),
-                        StreamEventData(StreamEvent.STOP_STREAM, emptyMap()),
-                    )
-
+                    logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}. Terminating.")
                     kafkaTemplate.send(
                         STATE_MACHINE_EVENTS_TOPIC,
                         stream.id.toString(),
                         StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
                     )
-                    logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}")
                 }
             } else {
                 // The process was killed due to instance restart
