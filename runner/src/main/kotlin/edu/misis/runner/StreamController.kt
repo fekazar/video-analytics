@@ -26,13 +26,17 @@ class StreamController(
     @PostMapping("/start-job")
     fun startJob(@RequestParam("streamUrl") streamUrl: URI): ResponseEntity<*> {
         logger.info("Start request for: $streamUrl")
-        val stream = streamRepository.createNewStream(streamUrl)?.also {
-            kafkaTemplate.send(
-                STATE_MACHINE_EVENTS_TOPIC,
-                it.id.toString(),
-                StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap())
-            )
-        } ?: streamRepository.findByStreamUrl(streamUrl)
+        val stream = try {
+            streamRepository.createNewStream(streamUrl)?.also {
+                kafkaTemplate.send(
+                    STATE_MACHINE_EVENTS_TOPIC,
+                    it.id.toString(),
+                    StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap())
+                )
+            }
+        } catch (e: Exception) {
+            streamRepository.findByStreamUrl(streamUrl)
+        }
 
         return if (stream == null) {
             ResponseEntity.status(HttpStatus.NOT_FOUND)

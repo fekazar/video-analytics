@@ -23,6 +23,7 @@ enum class StreamState {
     BUCKET_INITIALIZED,
     IN_PROGRESS,
     AWAIT_TERMINATION,
+    TERMINATED,
 }
 
 enum class StreamEvent {
@@ -83,7 +84,8 @@ class StreamStateMachineConfig(
     }
 
     fun clearStream(stream: StreamEntity) {
-        streamRepository.deleteById(stream.id)
+        //streamRepository.deleteById(stream.id)
+        streamRepository.updateState(stream.id, StreamState.TERMINATED)
     }
 
     @KafkaListener(
@@ -128,6 +130,10 @@ class StreamStateMachineConfig(
 
                 StreamState.AWAIT_TERMINATION -> if (event.type == StreamEvent.STREAM_TERMINATED) {
                     clearStream(stream)
+                }
+
+                StreamState.TERMINATED -> {
+                    logger.info("Received event ${event.type} for terminated stream ${stream.id}")
                 }
             }
         }.onFailure {

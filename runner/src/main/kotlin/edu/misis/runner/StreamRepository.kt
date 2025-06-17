@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import java.net.URI
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
@@ -32,6 +33,7 @@ class StreamRepository(
         val sql = """
             select * from stream
             where id = ?
+            and state != 'TERMINATED'
         """.trimIndent()
         return jdbcClient.sql(sql)
             .params(id.toString())
@@ -44,6 +46,7 @@ class StreamRepository(
         val sql = """
             select * from stream
             where streamUrl = ?
+            and state != 'TERMINATED'
         """.trimIndent()
         return jdbcClient.sql(sql)
             .params(streamUrl.toString())
@@ -65,7 +68,6 @@ class StreamRepository(
         val sql = """
             insert into stream (id, state, streamUrl, updatedAt)
             values (?, ?, ?, ?)
-            on conflict (streamUrl) do nothing
             returning *
         """.trimIndent()
         return jdbcClient.sql(sql)
