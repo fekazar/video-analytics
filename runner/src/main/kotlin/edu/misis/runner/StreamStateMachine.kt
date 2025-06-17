@@ -35,7 +35,6 @@ enum class StreamEvent {
 
 data class StreamEventData(
     val type: StreamEvent,
-    val headers: Map<String, String>,
 )
 
 @Configuration
@@ -109,7 +108,7 @@ class StreamStateMachine(
             state = StreamState.BUCKET_INITIALIZED,
         )
         streamRepository.update(updated)
-        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.START_STREAM, emptyMap()))
+        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, stream.id.toString(), StreamEventData(StreamEvent.START_STREAM))
     }
 
     private fun startStream(stream: StreamEntity) {

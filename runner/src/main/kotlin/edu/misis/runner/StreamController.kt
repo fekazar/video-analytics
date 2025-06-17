@@ -30,7 +30,7 @@ class StreamController(
                 kafkaTemplate.send(
                     STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     it.id.toString(),
-                    StreamEventData(StreamEvent.INITIALIZE_BUCKET, emptyMap())
+                    StreamEventData(StreamEvent.INITIALIZE_BUCKET)
                 )
             }
         } catch (e: Exception) {
@@ -48,7 +48,7 @@ class StreamController(
 
     @PostMapping("/stop-job")
     fun stopJob(@RequestParam("streamId") streamId: UUID): ResponseEntity<Unit> {
-        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM, emptyMap()))
+        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM))
         return ResponseEntity.status(HttpStatus.ACCEPTED)
             .body(Unit)
     }

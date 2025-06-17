@@ -152,7 +152,7 @@ class StreamChunkingJob : QuartzJobBean() {
                 kafkaTemplate.send(
                     STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     currentStream.id.toString(),
-                    StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                    StreamEventData(StreamEvent.STREAM_TERMINATED),
                 )
             }
         }
@@ -275,7 +275,7 @@ class StreamChunkingJob : QuartzJobBean() {
                     kafkaTemplate.send(
                         STREAM_STATE_MACHINE_EVENTS_TOPIC,
                         stream.id.toString(),
-                        StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                        StreamEventData(StreamEvent.STREAM_TERMINATED),
                     )
                 }
             } else {
@@ -295,7 +295,7 @@ class StreamChunkingJob : QuartzJobBean() {
             kafkaTemplate.send(
                 STREAM_STATE_MACHINE_EVENTS_TOPIC,
                 stream.id.toString(),
-                StreamEventData(StreamEvent.STREAM_TERMINATED, emptyMap()),
+                StreamEventData(StreamEvent.STREAM_TERMINATED),
             )
         }
     }
