@@ -10,3 +10,13 @@ create index if not exists find_by_stream_url_idx on stream(streamUrl);
 
 create unique index unique_non_terminated_stream_idx on stream(streamUrl)
 where state != 'TERMINATED';
+
+create table if not exists inference_events (
+    timestamp timestamp,
+    streamId text,
+    facesCount integer
+) with (
+  timescaledb.hypertable,
+  timescaledb.partition_column='timestamp',
+  timescaledb.segmentby='streamId'
+);

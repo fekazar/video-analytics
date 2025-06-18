@@ -8,13 +8,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory
 import org.springframework.kafka.config.TopicBuilder
-import org.springframework.kafka.core.ConsumerFactory
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
 import org.springframework.kafka.support.serializer.JsonDeserializer
-import org.springframework.scheduling.annotation.EnableScheduling
 
 @Configuration
-@EnableScheduling
 class Config {
     @Bean
     fun s3Client(): MinioClient {
@@ -23,27 +20,6 @@ class Config {
             .credentials("minioadmin", "minioadmin")
             .build()
     }
-
-    //@Bean
-    //fun consumerFactory(
-    //    @Value("\${spring.kafka.bootstrap-servers}") bootstrapServer: String,
-    //): ConsumerFactory<String, Any> {
-    //    return DefaultKafkaConsumerFactory(
-    //        mapOf(
-    //            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG to bootstrapServer,
-    //            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG to false,
-    //        ),
-    //        StringDeserializer(),
-    //        DelegatingByTopicDeserializer(
-    //            mapOf(
-    //                Pattern.compile(INFERENCE_RESULT_TOPIC) to JsonDeserializer(InferenceResultData::class.java)
-    //                    .ignoreTypeHeaders(),
-    //                Pattern.compile(STREAM_STATE_MACHINE_EVENTS_TOPIC) to JsonDeserializer(StreamEventData::class.java),
-    //            ),
-    //            JsonDeserializer<Any>()
-    //        )
-    //    )
-    //}
 
     @Bean
     fun consumerConfigs(
@@ -74,7 +50,7 @@ class Config {
         val consumerFactory = DefaultKafkaConsumerFactory(
             consumerProperties
                     + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 100)
-                    + (ConsumerConfig.FETCH_MIN_BYTES_CONFIG to 1024),
+                    + (ConsumerConfig.FETCH_MIN_BYTES_CONFIG to 5120),
             StringDeserializer(),
             JsonDeserializer(InferenceResultData::class.java)
         )

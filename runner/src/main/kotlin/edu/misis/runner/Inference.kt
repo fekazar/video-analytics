@@ -1,5 +1,7 @@
 package edu.misis.runner
 
+import edu.misis.runner.repository.InferenceRepository
+import edu.misis.runner.repository.InferenceResultEntity
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener
@@ -26,7 +28,8 @@ data class InferenceResultData(
 
 @Component
 class Inference(
-    private val kafkaTemplate: KafkaTemplate<String, ChunkMessageData>
+    private val kafkaTemplate: KafkaTemplate<String, ChunkMessageData>,
+    private val inferenceRepository: InferenceRepository,
 ) {
     private val logger = LoggerFactory.getLogger(Inference::class.java)
 
@@ -45,8 +48,8 @@ class Inference(
     )
     fun processResults(records: ConsumerRecords<String, InferenceResultData>) {
         logger.info("Fetched: ${records.count()} records")
-        records.forEach {
-            println(it.value())
-        }
+        records.map { InferenceResultEntity(it.value().timestamp, UUID.fromString(it.key()), it.value().facesCount) }
+            .also { inferenceRepository.batchInsert(it) }
+        logger.info("Saved fetched results")
     }
 }
