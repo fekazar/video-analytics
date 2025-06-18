@@ -22,7 +22,7 @@ class StalledStreamMonitoringJob : QuartzJobBean() {
 
     override fun executeInternal(context: JobExecutionContext) {
         // Should be large enough to consider time for chunking job retires
-        val threshold = Instant.now().minusSeconds(40)
+        val threshold = Instant.now().minusSeconds(60)
         streamRepository.findStalledStreams(threshold)
             .also { logger.info("Found ${it.size} stalled streams") }
             .map { stalledStream ->

@@ -1,10 +1,12 @@
 package edu.misis.runner
 
+import edu.misis.runner.repository.InferenceRepository
 import edu.misis.runner.repository.StreamRepository
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.kafka.core.KafkaTemplate
+import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -18,7 +20,8 @@ data class StreamUrlAccepted(
 
 @RestController
 class StreamController(
-    val streamRepository: StreamRepository,
+    private val streamRepository: StreamRepository,
+    private val inferenceRepository: InferenceRepository,
     private val kafkaTemplate: KafkaTemplate<String, StreamEventData>,
 ) {
     private val logger = LoggerFactory.getLogger(StreamController::class.java)
@@ -57,4 +60,7 @@ class StreamController(
         return ResponseEntity.status(HttpStatus.ACCEPTED)
             .body(Unit)
     }
+
+    @GetMapping("/inference-result")
+    fun getResult(@RequestParam("streamId") streamId: UUID) = inferenceRepository.getLastResult(streamId)
 }
