@@ -58,7 +58,7 @@ class Config {
         consumerProperties: Map<String, Any?>
     ): ConcurrentKafkaListenerContainerFactory<String, StreamEventData> {
         val consumerFactory = DefaultKafkaConsumerFactory(
-            consumerProperties + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 100),
+            consumerProperties,
             StringDeserializer(),
             JsonDeserializer(StreamEventData::class.java)
         )
@@ -72,7 +72,9 @@ class Config {
         consumerProperties: Map<String, Any?>
     ): ConcurrentKafkaListenerContainerFactory<String, InferenceResultData> {
         val consumerFactory = DefaultKafkaConsumerFactory(
-            consumerProperties + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 100),
+            consumerProperties
+                    + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 100)
+                    + (ConsumerConfig.FETCH_MIN_BYTES_CONFIG to 1024),
             StringDeserializer(),
             JsonDeserializer(InferenceResultData::class.java)
         )
