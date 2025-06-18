@@ -3,6 +3,7 @@ package edu.misis.runner
 import io.minio.MinioClient
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.kafka.config.TopicBuilder
 
 @Configuration
 class Config {
@@ -13,4 +14,14 @@ class Config {
             .credentials("minioadmin", "minioadmin")
             .build()
     }
+
+    @Bean
+    fun streamStateMachineTopic() = TopicBuilder.name(STREAM_STATE_MACHINE_EVENTS_TOPIC)
+        .partitions(6)
+        .build()
+
+    @Bean
+    fun inferenceChunksTopic() = TopicBuilder.name(CHUNKS_FOR_INFERENCE_TOPIC)
+        .partitions(6)
+        .build()
 }

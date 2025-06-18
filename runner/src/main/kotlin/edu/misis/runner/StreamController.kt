@@ -1,5 +1,6 @@
 package edu.misis.runner
 
+import edu.misis.runner.repository.StreamRepository
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity

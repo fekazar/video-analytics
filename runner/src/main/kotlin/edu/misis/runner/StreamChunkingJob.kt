@@ -1,5 +1,7 @@
 package edu.misis.runner
 
+import edu.misis.runner.repository.StreamEntity
+import edu.misis.runner.repository.StreamRepository
 import io.minio.*
 import io.minio.http.Method
 import org.quartz.*
@@ -148,7 +150,7 @@ class StreamChunkingJob : QuartzJobBean() {
             if (currentStream.state == StreamState.IN_PROGRESS) {
                 startStream(currentStream, context)
             } else {
-                logger.info("Stream was in inappropriate state (${currentStream.state} on job start. Terminating.")
+                logger.info("Stream was in inappropriate state (${currentStream.state}) on job start. Terminating.")
                 kafkaTemplate.send(
                     STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     currentStream.id.toString(),

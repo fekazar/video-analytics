@@ -1,14 +1,14 @@
-package edu.misis.runner
+package edu.misis.runner.repository
 
+import edu.misis.runner.StreamState
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository
 import java.net.URI
 import java.sql.ResultSet
-import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Instant
-import java.util.UUID
+import java.util.*
 import kotlin.jvm.optionals.getOrNull
 
 private class StreamRowMapper : RowMapper<StreamEntity> {

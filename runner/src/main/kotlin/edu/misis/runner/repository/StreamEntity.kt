@@ -1,5 +1,6 @@
-package edu.misis.runner
+package edu.misis.runner.repository
 
+import edu.misis.runner.StreamState
 import java.net.URI
 import java.time.Instant
 import java.util.*
