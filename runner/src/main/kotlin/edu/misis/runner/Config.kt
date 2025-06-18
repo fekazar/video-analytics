@@ -4,8 +4,10 @@ import io.minio.MinioClient
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.config.TopicBuilder
+import org.springframework.scheduling.annotation.EnableScheduling
 
 @Configuration
+@EnableScheduling
 class Config {
     @Bean
     fun s3Client(): MinioClient {

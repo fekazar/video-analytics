@@ -19,11 +19,9 @@ data class ChunkMessageData(
 class Inference(
     private val kafkaTemplate: KafkaTemplate<String, ChunkMessageData>
 ) {
-    fun startInference(streamId: UUID, message: ChunkMessageData) {
-        kafkaTemplate.send(
-            CHUNKS_FOR_INFERENCE_TOPIC,
-            streamId.toString(),
-            message,
-        )
-    }
+    fun startInference(streamId: UUID, message: ChunkMessageData) = kafkaTemplate.send(
+        CHUNKS_FOR_INFERENCE_TOPIC,
+        streamId.toString(),
+        message,
+    )
 }

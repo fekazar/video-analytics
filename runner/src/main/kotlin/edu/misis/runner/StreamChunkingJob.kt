@@ -155,7 +155,7 @@ class StreamChunkingJob : QuartzJobBean() {
                     STREAM_STATE_MACHINE_EVENTS_TOPIC,
                     currentStream.id.toString(),
                     StreamEventData(StreamEvent.STREAM_TERMINATED),
-                )
+                ).get()
             }
         }
     }
@@ -183,7 +183,7 @@ class StreamChunkingJob : QuartzJobBean() {
         val scheduledExecutor = Executors.newScheduledThreadPool(1)
         val terminationMonitoringFuture = scheduledExecutor.scheduleAtFixedRate({
             val actualStream = streamRepository.findById(stream.id)
-            if (actualStream?.state == StreamState.AWAIT_TERMINATION) {
+            if (actualStream?.state != StreamState.IN_PROGRESS) {
                 videoCaptureSubprocess.destroy()
                 logger.info("ffmpeg stream was stopped")
                 completedByRequest.set(true)
@@ -200,7 +200,6 @@ class StreamChunkingJob : QuartzJobBean() {
         }
 
         val encodingExecutor = Executors.newSingleThreadExecutor()
-
         ChunkReader(videoCaptureSubprocess.inputStream).use { reader ->
             reader.readChunks()
                 .forEach { chunk ->
@@ -211,6 +210,7 @@ class StreamChunkingJob : QuartzJobBean() {
                         val objectWriteResponse = uploadChunk(stream, encodedChunk)
                         val url = getPreSharedUrl(objectWriteResponse.bucket(), objectWriteResponse.`object`())
 
+                        // todo: run in kafka transaction
                         inference.startInference(
                             stream.id,
                             ChunkMessageData(
@@ -219,7 +219,12 @@ class StreamChunkingJob : QuartzJobBean() {
                                 chunk.createdAt,
                                 FPS,
                             )
-                        )
+                        ).get()
+                        kafkaTemplate.send(
+                            stream.id.toString(),
+                            STREAM_STATE_MACHINE_EVENTS_TOPIC,
+                            StreamEventData(StreamEvent.CHUNK_UPLOADED),
+                        ).get()
                     }
                 }
         }
@@ -243,43 +248,7 @@ class StreamChunkingJob : QuartzJobBean() {
 
         if (!completedByRequest.get()) {
             if (fatalErrors.isNotEmpty()) {
-                // do not restart job after limit was exceeded
-                val currentRetryCount = if (context.mergedJobDataMap.containsKey(RETRY_COUNT)) {
-                    context.mergedJobDataMap.getIntValue(RETRY_COUNT)
-                } else {
-                    0
-                }
-                if (currentRetryCount != RETRY_LIMIT - 1) {
-                    logger.warn(
-                        "Rescheduling job for for stream: ${stream.id}, ${stream.streamUrl}. Attempt ${currentRetryCount + 1} / $RETRY_LIMIT"
-                    )
-
-                    val chunkingJob = JobBuilder.newJob(StreamChunkingJob::class.java)
-                        .withIdentity(stream.streamUrl.toString(), JOB_GROUP)
-                        .usingJobData(STREAM_ID_KEY, stream.id.toString())
-                        .usingJobData(RETRY_COUNT, (currentRetryCount + 1).toString())
-                        .requestRecovery()
-                        .build()
-
-                    val delayMillis = ((2.0 + Math.random()).pow(currentRetryCount + 1) * 1000).toLong()
-
-                    val trigger = TriggerBuilder.newTrigger()
-                        .startAt(Date.from(Instant.now().plusMillis(delayMillis)))
-                        .forJob(chunkingJob)
-                        .build()
-
-                    transactionTemplate.executeWithoutResult {
-                        scheduler.deleteJob(chunkingJob.key)
-                        scheduler.scheduleJob(chunkingJob, trigger)
-                    }
-                } else {
-                    logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}. Terminating.")
-                    kafkaTemplate.send(
-                        STREAM_STATE_MACHINE_EVENTS_TOPIC,
-                        stream.id.toString(),
-                        StreamEventData(StreamEvent.STREAM_TERMINATED),
-                    )
-                }
+                rescheduleJob(stream, context)
             } else {
                 // The process was killed due to instance restart
                 throw JobExecutionException("StreamChunkingJob has completed unexpectedly, but without ffmpeg errors", true)
@@ -298,7 +267,47 @@ class StreamChunkingJob : QuartzJobBean() {
                 STREAM_STATE_MACHINE_EVENTS_TOPIC,
                 stream.id.toString(),
                 StreamEventData(StreamEvent.STREAM_TERMINATED),
+            ).get()
+        }
+    }
+
+    private fun rescheduleJob(stream: StreamEntity, context: JobExecutionContext) {
+        // do not restart job after limit was exceeded
+        val currentRetryCount = if (context.mergedJobDataMap.containsKey(RETRY_COUNT)) {
+            context.mergedJobDataMap.getIntValue(RETRY_COUNT)
+        } else {
+            0
+        }
+        if (currentRetryCount != RETRY_LIMIT - 1) {
+            logger.warn(
+                "Rescheduling job for for stream: ${stream.id}, ${stream.streamUrl}. Attempt ${currentRetryCount + 1} / $RETRY_LIMIT"
             )
+
+            val chunkingJob = JobBuilder.newJob(StreamChunkingJob::class.java)
+                .withIdentity(stream.streamUrl.toString(), JOB_GROUP)
+                .usingJobData(STREAM_ID_KEY, stream.id.toString())
+                .usingJobData(RETRY_COUNT, (currentRetryCount + 1).toString())
+                .requestRecovery()
+                .build()
+
+            val delayMillis = ((2.0 + Math.random()).pow(currentRetryCount + 1) * 1000).toLong()
+
+            val trigger = TriggerBuilder.newTrigger()
+                .startAt(Date.from(Instant.now().plusMillis(delayMillis)))
+                .forJob(chunkingJob)
+                .build()
+
+            transactionTemplate.executeWithoutResult {
+                scheduler.deleteJob(chunkingJob.key)
+                scheduler.scheduleJob(chunkingJob, trigger)
+            }
+        } else {
+            logger.warn("Stream chunking job retry limit exceeded for stream: ${stream.id}, ${stream.streamUrl}. Terminating.")
+            kafkaTemplate.send(
+                STREAM_STATE_MACHINE_EVENTS_TOPIC,
+                stream.id.toString(),
+                StreamEventData(StreamEvent.STREAM_TERMINATED),
+            ).get()
         }
     }
 

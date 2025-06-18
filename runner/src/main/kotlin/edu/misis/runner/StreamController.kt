@@ -27,15 +27,15 @@ class StreamController(
     fun startJob(@RequestParam("streamUrl") streamUrl: URI): ResponseEntity<*> {
         logger.info("Start request for: $streamUrl")
         val stream = try {
-            streamRepository.createNewStream(streamUrl)?.also {
-                kafkaTemplate.send(
-                    STREAM_STATE_MACHINE_EVENTS_TOPIC,
-                    it.id.toString(),
-                    StreamEventData(StreamEvent.INITIALIZE_BUCKET)
-                )
-            }
+            streamRepository.createNewStream(streamUrl)
         } catch (e: Exception) {
             streamRepository.findByStreamUrl(streamUrl)
+        }?.also {
+            kafkaTemplate.send(
+                STREAM_STATE_MACHINE_EVENTS_TOPIC,
+                it.id.toString(),
+                StreamEventData(StreamEvent.INITIALIZE_BUCKET)
+            ).get()
         }
 
         return if (stream == null) {
@@ -49,7 +49,11 @@ class StreamController(
 
     @PostMapping("/stop-job")
     fun stopJob(@RequestParam("streamId") streamId: UUID): ResponseEntity<Unit> {
-        kafkaTemplate.send(STREAM_STATE_MACHINE_EVENTS_TOPIC, streamId.toString(), StreamEventData(StreamEvent.STOP_STREAM))
+        kafkaTemplate.send(
+            STREAM_STATE_MACHINE_EVENTS_TOPIC,
+            streamId.toString(),
+            StreamEventData(StreamEvent.STOP_STREAM)
+        ).get()
         return ResponseEntity.status(HttpStatus.ACCEPTED)
             .body(Unit)
     }

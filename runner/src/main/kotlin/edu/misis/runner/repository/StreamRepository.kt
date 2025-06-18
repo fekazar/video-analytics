@@ -33,7 +33,6 @@ class StreamRepository(
         val sql = """
             select * from stream
             where id = ?
-            and state != 'TERMINATED'
         """.trimIndent()
         return jdbcClient.sql(sql)
             .params(id.toString())
@@ -55,13 +54,19 @@ class StreamRepository(
             .getOrNull()
     }
 
-    fun deleteById(id: UUID) {
+    fun findStalledStreams(stalledThreshold: Instant): List<StreamEntity> {
         val sql = """
-            delete from stream where id = ?
+            select *
+            from stream s
+            where state != 'TERMINATED' and updatedAt < ?
+            for update
+            skip locked 
+            limit 10
         """.trimIndent()
-        jdbcClient.sql(sql)
-            .params(id.toString())
-            .update()
+        return jdbcClient.sql(sql)
+            .params(Timestamp.from(stalledThreshold))
+            .query(rowMapper)
+            .list()
     }
 
     fun createNewStream(streamUrl: URI): StreamEntity? {

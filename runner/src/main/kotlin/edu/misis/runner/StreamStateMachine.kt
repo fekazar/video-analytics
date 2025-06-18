@@ -33,6 +33,7 @@ enum class StreamEvent {
     START_STREAM,
     STOP_STREAM,
     STREAM_TERMINATED,
+    CHUNK_UPLOADED,
 }
 
 data class StreamEventData(
@@ -87,6 +88,10 @@ class StreamStateMachine(
                     stopStream(stream)
                 } else if (event.type == StreamEvent.STREAM_TERMINATED) {
                     clearStream(stream)
+                } else if (event.type == StreamEvent.CHUNK_UPLOADED) {
+                    // update updatedAt
+                    // todo: use liveliness indicator
+                    streamRepository.update(stream)
                 }
 
                 StreamState.AWAIT_TERMINATION -> if (event.type == StreamEvent.STREAM_TERMINATED) {
