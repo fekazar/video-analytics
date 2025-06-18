@@ -35,11 +35,11 @@ class VideoAnalyticsService:
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         logger.info(f"Initialized Kafka consumer for topic: {kafka_config.topic}")
 
-    def calculate_frame_timestamp(self, base_timestamp: datetime, fps: int, frame_number: int) -> str:
+    def calculate_frame_timestamp(self, base_timestamp: datetime, fps: int, frame_number: int) -> float:
         """Calculate timestamp for a specific frame based on base timestamp and FPS."""
         frame_duration = timedelta(seconds=1/fps)
         frame_timestamp = base_timestamp + (frame_duration * frame_number)
-        return frame_timestamp.isoformat()
+        return frame_timestamp.timestamp()
 
     def delivery_report(self, err, msg):
         """Called once for each message produced to indicate delivery result."""
@@ -48,13 +48,9 @@ class VideoAnalyticsService:
         else:
             logger.debug(f'Message delivered to {msg.topic()} [{msg.partition()}]')
 
-    def send_inference_result(self, stream_id: str, frame_number: int, frame_timestamp: str, faces_count: int, stream_url: str, pre_shared_url: str):
+    def send_inference_result(self, stream_id: str, frame_number: int, frame_timestamp: float, faces_count: int, stream_url: str, pre_shared_url: str):
         """Send inference result to Kafka topic."""
         result = {
-            "streamId": stream_id,
-            "streamUrl": stream_url,
-            "preSharedUrl": pre_shared_url,
-            "frameNumber": frame_number,
             "timestamp": frame_timestamp,
             "facesCount": faces_count
         }
@@ -126,7 +122,6 @@ class VideoAnalyticsService:
                 raise ValueError("Received empty message value")
                 
             stream_url = video_data['streamUrl']
-            pre_shared_url = video_data['preSharedUrl']
             logger.info(f"Processing video chunk from stream: {stream_id}")
             logger.info(f"Video data: {video_data}")
             
@@ -159,7 +154,7 @@ class VideoAnalyticsService:
                 frame_timestamp = self.calculate_frame_timestamp(created_at, fps, frame_count)
                 
                 # Send inference result to Kafka
-                self.send_inference_result(stream_id, frame_count, frame_timestamp, faces_in_frame, stream_url, pre_shared_url)
+                self.send_inference_result(stream_id, frame_count, frame_timestamp, faces_in_frame, stream_url, video_data['preSharedUrl'])
                 
                 frame_count += 1
                 logger.debug(f"Frame {frame_count}/{total_frames}: detected {faces_in_frame} faces")

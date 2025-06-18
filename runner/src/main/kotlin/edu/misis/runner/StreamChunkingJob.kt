@@ -221,8 +221,8 @@ class StreamChunkingJob : QuartzJobBean() {
                             )
                         ).get()
                         kafkaTemplate.send(
-                            stream.id.toString(),
                             STREAM_STATE_MACHINE_EVENTS_TOPIC,
+                            stream.id.toString(),
                             StreamEventData(StreamEvent.CHUNK_UPLOADED),
                         ).get()
                     }

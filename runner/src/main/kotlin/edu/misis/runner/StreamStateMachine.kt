@@ -53,6 +53,7 @@ class StreamStateMachine(
     @KafkaListener(
         topics = [STREAM_STATE_MACHINE_EVENTS_TOPIC],
         groupId = STREAM_STATE_MACHINE_GROUP,
+        containerFactory = "streamStateMachineContainerFactory"
     )
     fun eventListener(
         @Header(KafkaHeaders.RECEIVED_KEY) key: String,
