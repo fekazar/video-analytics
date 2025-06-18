@@ -10,7 +10,7 @@ class InferenceRepository(
 ) {
     fun batchInsert(records: List<InferenceResultEntity>) {
         val sql = """
-            insert into inference_events (timestamp, streamId, facesCount)
+            insert into inference_events (instant, streamId, facesCount)
             values (?, ?, ?)
         """.trimIndent()
         jdbcTemplate.batchUpdate(
