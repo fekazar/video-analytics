@@ -51,7 +51,7 @@ class Config {
     ): ConcurrentKafkaListenerContainerFactory<String, InferenceResultData> {
         val consumerFactory = DefaultKafkaConsumerFactory(
             consumerProperties
-                    + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 100)
+                    + (ConsumerConfig.MAX_POLL_RECORDS_CONFIG to 1000)
                     + (ConsumerConfig.FETCH_MIN_BYTES_CONFIG to 5120),
             StringDeserializer(),
             JsonDeserializer(InferenceResultData::class.java)
