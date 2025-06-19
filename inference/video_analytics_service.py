@@ -20,7 +20,7 @@ class VideoAnalyticsService:
             'bootstrap.servers': kafka_config.bootstrap_servers,
             'group.id': kafka_config.consumer_group,
             'auto.offset.reset': kafka_config.auto_offset_reset,
-            'enable.auto.commit': True
+            'enable.auto.commit': False
         }
         self.consumer = Consumer(consumer_config)
         self.consumer.subscribe([kafka_config.topic])
@@ -196,7 +196,8 @@ class VideoAnalyticsService:
                 
                 logger.debug(f"Received message at offset {msg.offset()}")
                 self.process_video_chunk(msg)
-                
+                # Commit offset only after processing and sending result
+                self.consumer.commit(message=msg)
         except KeyboardInterrupt:
             logger.info("Shutting down video analytics service...")
         finally:

@@ -35,6 +35,7 @@ class InferenceRepository(
                 count(*) as samples_in_interval
             from 
                 inference_events
+            where streamId = ?
             group by 
                 five_second_interval
             order by
@@ -42,6 +43,7 @@ class InferenceRepository(
             limit 60;
         """.trimIndent()
         return jdbcClient.sql(sql)
+            .params(streamId.toString())
             .query { rs, _ -> IntervalAverageProj(
                 rs.getTimestamp("five_second_interval").toInstant(),
                 rs.getTimestamp("five_second_interval").toInstant().plusSeconds(5),

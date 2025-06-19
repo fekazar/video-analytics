@@ -1,6 +1,66 @@
 services:
+  kafka-ui:
+    network_mode: "host"
+    image: provectuslabs/kafka-ui
+    environment:
+      SERVER_PORT: 7777
+      DYNAMIC_CONFIG_ENABLED: true
+
+  db:
+    image: timescale/timescaledb-ha:pg17
+    network_mode: "host"
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres 
+      POSTGRES_PASSWORD: 1
+    ports:
+      - "5432:5432"
+
+  streamer-1:
+    container_name: streamer-1
+    network_mode: "host"
+    image: sha256:681bb20c222c92e8995168000fd73c7d3a8c16d6d3f5f4167b2cdaec16c43570
+    #build:
+    #  context: streamer
+    #  dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8081
+    depends_on:
+      - db
+
+  streamer-2:
+    container_name: streamer-2
+    network_mode: "host"
+    image: sha256:681bb20c222c92e8995168000fd73c7d3a8c16d6d3f5f4167b2cdaec16c43570
+    #build:
+    #  context: streamer
+    #  dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: 8082
+    depends_on:
+      - db
+
+  inference:
+    network_mode: "host"
+    restart: on-failure
+    build:
+      context: inference
+      dockerfile: Dockerfile
+
+  nginx:
+    image: nginx:alpine
+    network_mode: "host"
+    ports:
+      - "83:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - streamer-1
+      - streamer-2
+
   s3:
     image: minio/minio
+    network_mode: "host"
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"

@@ -16,20 +16,22 @@ RUN gradle dependencies
 RUN gradle build --no-daemon -x test
 
 # Stage 2: Create the final lightweight runtime image
-FROM eclipse-temurin:17-jre-alpine
+#FROM ubuntu/jre:21-24.04_stable
+FROM amazoncorretto:21-alpine-full
 
 # Set working directory
 WORKDIR /app
+
+RUN apk add ffmpeg
 
 # Copy the built artifact from the builder stage
 COPY --from=builder /app/build/libs/*SNAPSHOT.jar app.jar
 
 # Set environment variables
 ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
-ENV SPRING_PROFILES_ACTIVE="prod"
 
 # Expose the port your app runs on
-EXPOSE 8080
+EXPOSE 8081
 
 # Run the application
 ENTRYPOINT ["sh", "-c", "java ${JAVA_OPTS} -jar /app/app.jar"]

@@ -27,6 +27,7 @@ class ApplicationReadyListener(
 	fun onApplicationReady() {
 		val job = JobBuilder.newJob(StalledStreamMonitoringJob::class.java)
 			.withIdentity(StalledStreamMonitoringJob::class.simpleName)
+			.requestRecovery()
 			.build()
 
 		val trigger = TriggerBuilder.newTrigger()
