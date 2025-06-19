@@ -1,4 +1,4 @@
-package edu.misis.runner
+package edu.misis.streamer
 
 import io.minio.MinioClient
 import org.apache.kafka.clients.consumer.ConsumerConfig

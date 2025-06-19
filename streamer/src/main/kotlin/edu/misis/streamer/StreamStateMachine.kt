@@ -1,7 +1,7 @@
-package edu.misis.runner
+package edu.misis.streamer
 
-import edu.misis.runner.repository.StreamEntity
-import edu.misis.runner.repository.StreamRepository
+import edu.misis.streamer.repository.StreamEntity
+import edu.misis.streamer.repository.StreamRepository
 import io.minio.MakeBucketArgs
 import io.minio.MinioClient
 import org.quartz.JobBuilder

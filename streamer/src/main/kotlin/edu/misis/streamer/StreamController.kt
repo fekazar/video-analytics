@@ -1,7 +1,7 @@
-package edu.misis.runner
+package edu.misis.streamer
 
-import edu.misis.runner.repository.InferenceRepository
-import edu.misis.runner.repository.StreamRepository
+import edu.misis.streamer.repository.InferenceRepository
+import edu.misis.streamer.repository.StreamRepository
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity

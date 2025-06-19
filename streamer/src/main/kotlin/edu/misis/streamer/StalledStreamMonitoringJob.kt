@@ -1,6 +1,6 @@
-package edu.misis.runner
+package edu.misis.streamer
 
-import edu.misis.runner.repository.StreamRepository
+import edu.misis.streamer.repository.StreamRepository
 import org.quartz.DisallowConcurrentExecution
 import org.quartz.JobExecutionContext
 import org.slf4j.LoggerFactory

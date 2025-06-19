@@ -1,6 +1,6 @@
-package edu.misis.runner.repository
+package edu.misis.streamer.repository
 
-import edu.misis.runner.StreamState
+import edu.misis.streamer.StreamState
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.stereotype.Repository

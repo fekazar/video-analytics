@@ -1,7 +1,7 @@
-package edu.misis.runner
+package edu.misis.streamer
 
-import edu.misis.runner.repository.InferenceRepository
-import edu.misis.runner.repository.InferenceResultEntity
+import edu.misis.streamer.repository.InferenceRepository
+import edu.misis.streamer.repository.InferenceResultEntity
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.annotation.KafkaListener

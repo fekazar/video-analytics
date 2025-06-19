@@ -1,4 +1,4 @@
-package edu.misis.runner.repository
+package edu.misis.streamer.repository
 
 import java.time.Instant
 

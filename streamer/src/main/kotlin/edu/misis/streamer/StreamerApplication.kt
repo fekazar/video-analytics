@@ -1,10 +1,8 @@
-package edu.misis.runner
+package edu.misis.streamer
 
 import org.quartz.JobBuilder
 import org.quartz.ObjectAlreadyExistsException
-import org.quartz.ScheduleBuilder
 import org.quartz.Scheduler
-import org.quartz.SchedulerException
 import org.quartz.SimpleScheduleBuilder
 import org.quartz.TriggerBuilder
 import org.slf4j.LoggerFactory
@@ -16,7 +14,7 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 
 @SpringBootApplication
-class RunnerApplication
+class StreamerApplication
 
 @Component
 class ApplicationReadyListener(
@@ -47,5 +45,5 @@ class ApplicationReadyListener(
 }
 
 fun main(args: Array<String>) {
-	runApplication<RunnerApplication>(*args)
+	runApplication<StreamerApplication>(*args)
 }

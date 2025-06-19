@@ -1,1 +1,1 @@
-rootProject.name = "runner"
+rootProject.name = "streamer"
