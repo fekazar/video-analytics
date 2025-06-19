@@ -14,9 +14,11 @@ import org.springframework.kafka.support.serializer.JsonDeserializer
 @Configuration
 class Config {
     @Bean
-    fun s3Client(): MinioClient {
+    fun s3Client(
+        @Value("\${s3.minio.endpoint}") minioEndpoint: String
+    ): MinioClient {
         return MinioClient.builder()
-            .endpoint("http://localhost:9000")
+            .endpoint(minioEndpoint)
             .credentials("minioadmin", "minioadmin")
             .build()
     }
