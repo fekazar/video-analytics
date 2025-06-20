@@ -19,7 +19,7 @@ services:
   streamer-1:
     container_name: streamer-1
     network_mode: "host"
-    image: sha256:681bb20c222c92e8995168000fd73c7d3a8c16d6d3f5f4167b2cdaec16c43570
+    image: sha256:0eee23f0f1c9b9d40b0f69ad956d2ce3b44355d3c80c9a48d90aa266ca4f399b
     #build:
     #  context: streamer
     #  dockerfile: Dockerfile
@@ -31,7 +31,7 @@ services:
   streamer-2:
     container_name: streamer-2
     network_mode: "host"
-    image: sha256:681bb20c222c92e8995168000fd73c7d3a8c16d6d3f5f4167b2cdaec16c43570
+    image: sha256:0eee23f0f1c9b9d40b0f69ad956d2ce3b44355d3c80c9a48d90aa266ca4f399b
     #build:
     #  context: streamer
     #  dockerfile: Dockerfile
@@ -42,7 +42,7 @@ services:
 
   inference:
     network_mode: "host"
-    restart: on-failure
+    restart: always
     build:
       context: inference
       dockerfile: Dockerfile

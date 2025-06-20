@@ -1,5 +1,5 @@
 # Stage 1: Build the application using Gradle
-FROM gradle:8.4.0-jdk17-alpine as builder
+FROM gradle:8.14.2-jdk21-alpine as builder
 
 # Set working directory
 WORKDIR /app
